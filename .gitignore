@@ -1,0 +1,87 @@
+# =============================================================================
+# optomerge — .gitignore
+# Place this file at the root of the ffreg/ repository.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Raw data and output — never commit microscopy movies or large TIFFs
+# ---------------------------------------------------------------------------
+test_data/
+output_temp/
+data/
+raw/
+*.tif
+*.tiff
+
+# ---------------------------------------------------------------------------
+# Inspiration / reference material (MATLAB source, old scripts)
+# ---------------------------------------------------------------------------
+inspiration_material/
+
+# ---------------------------------------------------------------------------
+# Python build artefacts
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# ---------------------------------------------------------------------------
+# Jupyter notebooks — outputs and checkpoints
+# ---------------------------------------------------------------------------
+.ipynb_checkpoints/
+# Uncomment the next line to also ignore notebooks themselves:
+# *.ipynb
+
+# ---------------------------------------------------------------------------
+# IDE and editor files
+# ---------------------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ---------------------------------------------------------------------------
+# Test / coverage artefacts
+# ---------------------------------------------------------------------------
+.pytest_cache/
+.coverage
+htmlcov/
+*.pytest_cache
+
+# ---------------------------------------------------------------------------
+# Optomerge run outputs
+# ---------------------------------------------------------------------------
+run_log.txt
+*_aligned.tif
+*_aligned.tiff
+
+# ---------------------------------------------------------------------------
+# Config overrides — keep the sample optomerge.toml in version control,
+# but ignore any local experiment-specific overrides you don't want to share.
+# ---------------------------------------------------------------------------
+# optomerge.local.toml
+
+# ---------------------------------------------------------------------------
+# Secrets / credentials (just in case)
+# ---------------------------------------------------------------------------
+.env
+*.pem
+*.key

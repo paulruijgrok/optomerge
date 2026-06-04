@@ -1,0 +1,179 @@
+# optomerge.toml
+# ==============
+# Configuration file for the optomerge batch pipeline.
+#
+# RESOLUTION ORDER (last value wins):
+#   built-in defaults  <  this file  <  CLI flags
+#
+# DISCOVERY ORDER (first file found is used):
+#   1.  --config FILE              (explicitly supplied on the command line)
+#   2.  ./optomerge.toml           (next to the script, i.e. this file)
+#   3.  ~/.config/optomerge/optomerge.toml   (user-global defaults)
+#
+# All keys are optional — comment out any line to revert to the built-in
+# default shown in the inline comment.
+
+# ---------------------------------------------------------------------------
+# [io]  File input / output
+# ---------------------------------------------------------------------------
+[io]
+
+# Root directory containing the raw TIFF movie files.
+# Subdirectories are searched recursively.
+input  = "test_data"            # default: "test_data"
+
+# Root directory where aligned output files are written.
+# The original folder structure under [io.input] is preserved.
+output = "output_temp"          # default: "output_temp"
+
+# String appended to each output filename before the extension.
+# Example: "movie.tif"  →  "movie_aligned.tif"
+suffix = "_aligned"             # default: "_aligned"
+
+# Output file format.
+# Currently only "rgb_tiff" is fully implemented.
+# Reserved for future use: "ome_tiff", "zarr", "split_channels"
+format = "rgb_tiff"             # default: "rgb_tiff"
+
+# If false (default), skip files whose output path already exists.
+# Set to true to force re-processing and overwrite existing outputs.
+overwrite = false               # default: false
+
+
+# ---------------------------------------------------------------------------
+# [projection]  Mean-projection used for channel and alignment detection
+# ---------------------------------------------------------------------------
+[projection]
+
+# Maximum number of frames to include in the mean projection.
+# null = use all frames (recommended for good SNR).
+# Reduce (e.g. 200) to speed up detection on very long movies.
+frames = null                   # default: null (all frames)
+
+# Radius (pixels) of the structuring element for background subtraction.
+# Larger values remove more background but take longer.
+# Typical range: 5–20 for TIRF microscopy.
+bg_radius = 10                  # default: 10
+
+# Background subtraction method applied to the projection image.
+#   "morph_open"  – morphological opening (MATLAB-equivalent, most accurate)
+#   "gaussian"    – Gaussian blur (~10–30× faster, similar quality)
+bg_method = "morph_open"        # default: "morph_open"
+
+# Spatial order of the two imaging channels on the detector.
+#   "auto"                             – detect automatically from intensity
+#   "top_green_fils_bottom_red_heads"  – green channel on top half
+#   "top_red_heads_bottom_green_fils"  – red channel on top half
+# Override when auto-detection gives wrong results.
+channel_order = "auto"          # default: "auto"
+
+
+# ---------------------------------------------------------------------------
+# [alignment]  Inter-channel alignment computation
+# ---------------------------------------------------------------------------
+[alignment]
+
+# Strategy for computing the alignment transform.
+#   "robust"  – project multiple frame chunks, score each, pick the best.
+#               Equivalent to MATLAB findChannelsAndAlignment.  Recommended.
+#   "single"  – one projection of all (or projection.frames) frames.
+#               Faster but may pick a bad segment of the movie.
+mode = "robust"                 # default: "robust"
+
+# Batch-level alignment reuse across movies with the same optical setup
+# (e.g. movies acquired on the same day on the same microscope).
+#   "none"        – each movie is aligned independently  (default)
+#   "first"       – use the first movie in the batch as the geometric
+#                   reference; subsequent movies skip alignment computation
+#   "/path/to/ref.tif"  – use a specific file as the reference
+# Intensity normalisation (green/red min–max) is always computed per-movie.
+reuse = "none"                  # default: "none"
+
+# Frames per projection chunk in "robust" mode.
+# Larger chunks give a higher-SNR projection per candidate but leave
+# fewer independent candidates in a typical movie length.
+robust_chunk_size = 400         # default: 400
+
+# Minimum number of valid chunk candidates to collect before selecting
+# the best.  Increase for more reliability at the cost of speed.
+robust_min_candidates = 10      # default: 10
+
+# Hard upper limit on the number of chunks tried before stopping.
+# Must be >= robust_min_candidates.
+robust_max_trials = 30          # default: 30
+
+# Thresholds for automatic frame-alignment method selection.
+# Used only when frames.align_method = "auto" (the default).
+[alignment.auto_method_thresholds]
+
+# When the computed rotation is below this limit AND the scale deviation
+# is below scale_percent, the faster fft_shift method is chosen automatically.
+# Set to 0 to always use the full affine transform when align_method = "auto".
+rotation_deg  = 0.5             # default: 0.5 degrees
+
+# Maximum scale deviation (|s−1| × 100) treated as "translation-only".
+scale_percent = 0.5             # default: 0.5 %
+
+
+# ---------------------------------------------------------------------------
+# [frames]  Method for applying the transform to individual frames
+# ---------------------------------------------------------------------------
+[frames]
+
+# Frame-alignment method applied after computing alignment parameters.
+#   "auto"            – use fft_shift when rotation < alignment.auto_method_thresholds.rotation_deg
+#                       AND scale deviation < alignment.auto_method_thresholds.scale_percent;
+#                       otherwise use affine.  Recommended.
+#   "affine"          – full affine transform (rotation + anisotropic scale +
+#                       translation) via cubic-spline interpolation.
+#                       Most accurate, slowest.
+#   "fft_shift"       – sub-pixel Fourier shift (~2–3× faster than affine).
+#                       Exact for pure translations; ignores residual rotation/scale.
+#   "quick_and_dirty" – integer-pixel shift, no interpolation (~20–50× faster).
+#                       ±0.5 px accuracy; useful for quick previews.
+align_method = "auto"           # default: "auto"
+
+
+# ---------------------------------------------------------------------------
+# [compute]  Parallelism and computational backend
+# ---------------------------------------------------------------------------
+[compute]
+
+# Computational backend for background subtraction and affine transform.
+#   "auto"   – use OpenCV (cv2) when available, fall back to scipy  (recommended)
+#   "cv2"    – force OpenCV  (fast, float32)
+#   "scipy"  – force scipy/skimage  (slower, float64, no OpenCV dependency)
+backend = "auto"                # default: "auto"
+
+# Number of CPU threads for frame-level parallel processing.
+# null = use all logical CPUs.  Set to 1 to disable parallelism (useful
+# when debugging or when running inside another parallel context).
+n_workers = null                # default: null (all CPUs)
+
+# Process multiple movie files simultaneously using separate OS processes.
+# When true, frame-level workers is forced to 1 to avoid nested parallelism.
+# Best for batches of many short movies on a many-core machine.
+parallel_files = false          # default: false
+
+
+# ---------------------------------------------------------------------------
+# [logging]  Terminal output and log-file settings
+# ---------------------------------------------------------------------------
+[logging]
+
+# Print detailed per-step alignment parameters for every movie.
+verbose = false                 # default: false
+
+# Show live progress bars for slow steps (background subtraction, alignment,
+# frame transform).  Set false when redirecting output to a file.
+show_progress = true            # default: true
+
+# List files that would be processed without actually running the pipeline.
+dry_run = false                 # default: false
+
+# Verbosity of the log file written to [io.output]/run_log.txt.
+#   "DEBUG"    – everything, including internal diagnostics
+#   "INFO"     – normal run information  (recommended)
+#   "WARNING"  – only warnings and errors
+#   "ERROR"    – only errors
+log_level = "INFO"              # default: "INFO"

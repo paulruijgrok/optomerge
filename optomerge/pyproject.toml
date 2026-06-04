@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "optomerge"
+version = "0.1.0"
+description = "Crop and register multichannel sub-images from raw fluorescence movie stacks"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Paul Ruijgrok", email = "paulruijgrok@gmail.com" }]
+keywords = ["image registration", "fluorescence microscopy", "TIRF", "channel alignment"]
+dependencies = [
+    "numpy>=1.23",
+    "scipy>=1.9",
+    "scikit-image>=0.19",
+    "tifffile>=2022.5",
+    "pydantic>=2.0",
+    "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "matplotlib"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["optomerge*"]
