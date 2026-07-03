@@ -16,6 +16,8 @@ from typing import Dict, Optional, Tuple
 
 import numpy as np
 
+from .acceptance import AcceptanceCriteria
+from .calibration import Calibration, Calibrator, SingleProjectionCalibrator
 from .layout import ChannelLayout
 from .movie import RGBMovie, RawMovie
 from .registration import Aligner, PhaseCorrelationAligner
@@ -30,16 +32,26 @@ class MergePipeline:
     source : str or Path
         Input movie path; a reader is selected by extension.
     layout : ChannelLayout, optional
-        Channel layout; defaults to auto-detect.
+        Channel layout; defaults to auto-detect. Ignored if ``calibrator`` is given.
     aligner : Aligner, optional
-        Registration strategy; defaults to phase correlation.
+        Registration strategy; defaults to phase correlation. Ignored if
+        ``calibrator`` is given.
     bunch_size : int
         Frames per processing block (the FrameBunch granularity).
     bg_radius : int
         Background-subtraction structuring-element radius.
     projection_frames : int, optional
-        Frames used for channel finding / alignment (all if None).
+        Frames used for channel finding / alignment (all if None). Ignored if
+        ``calibrator`` is given.
     verbose : bool
+    calibrator : Calibrator, optional
+        Strategy for detecting channels + fitting the alignment. Defaults to a
+        :class:`~optomerge.calibration.SingleProjectionCalibrator` built from
+        ``layout``/``aligner``/``projection_frames``. Pass a
+        :class:`~optomerge.calibration.RobustCalibrator` for best-of-N finding.
+    criteria : AcceptanceCriteria, optional
+        Acceptance thresholds; recorded on the resulting calibration (and, for
+        the default single-projection calibrator, used to flag a rejected fit).
     """
 
     def __init__(
@@ -51,6 +63,8 @@ class MergePipeline:
         bg_radius: int = 10,
         projection_frames: Optional[int] = None,
         verbose: bool = False,
+        calibrator: Optional[Calibrator] = None,
+        criteria: Optional[AcceptanceCriteria] = None,
     ) -> None:
         self.source = Path(source)
         self.layout = layout or ChannelLayout.auto()
@@ -59,8 +73,14 @@ class MergePipeline:
         self.bg_radius = bg_radius
         self.projection_frames = projection_frames
         self.verbose = verbose
+        self.criteria = criteria
+        self.calibrator = calibrator or SingleProjectionCalibrator(
+            layout=self.layout, aligner=self.aligner,
+            projection_frames=projection_frames, criteria=criteria, verbose=verbose,
+        )
 
         # Populated by run().
+        self.calibration: Optional[Calibration] = None
         self.resolved_layout: Optional[ChannelLayout] = None
         self.transforms: Dict[str, Transform] = {}
         self._limits: Dict[str, Tuple[float, float]] = {}
@@ -72,27 +92,22 @@ class MergePipeline:
     # -- stages ------------------------------------------------------------ #
 
     def calibrate(self, movie: RawMovie) -> None:
-        """Resolve the layout and fit per-moving-channel transforms.
+        """Detect the layout + fit transforms via the configured calibrator.
 
-        Mirrors the original ``find_channels`` + ``compute_alignment``: detect
-        channel bounds on the projections, then phase-correlate the normalised
-        projection crops. Intensity limits measured here are reused verbatim for
-        per-frame normalisation (a key fidelity point).
+        Delegates to ``self.calibrator`` and stores the resulting layout,
+        transforms and intensity limits. Intensity limits measured here are
+        reused verbatim for per-frame normalisation (a key fidelity point).
         """
-        self.resolved_layout = movie.find_layout(
-            self.layout, projection_frames=self.projection_frames, verbose=self.verbose
-        )
-        self._log(f"Resolved layout: {self.resolved_layout.name} "
-                  f"({len(self.resolved_layout.specs)} channel(s))")
-
-        mean_proj = movie.mean_projection(self.projection_frames)
-        proj_channels = {c.name: c.calibrate() for c in self.resolved_layout.split(mean_proj)}
-        self._limits = {name: (c.vmin, c.vmax) for name, c in proj_channels.items()}
-
-        reference = next(c for c in proj_channels.values() if c.reference)
-        for spec in self.resolved_layout.moving_specs:
-            self.transforms[spec.name] = self.aligner.align(reference, proj_channels[spec.name])
-            self._log(f"  {spec.name}: {self.transforms[spec.name]}")
+        cal = self.calibrator.calibrate(movie)
+        self.calibration = cal
+        self.resolved_layout = cal.resolved_layout
+        self.transforms = cal.transforms
+        self._limits = cal.limits
+        self._log(f"Resolved layout: {cal.resolved_layout.name} "
+                  f"({len(cal.resolved_layout.specs)} channel(s)); "
+                  f"score={cal.score:.4f} accepted={cal.accepted}")
+        for name, t in cal.transforms.items():
+            self._log(f"  {name}: {t}")
 
     def run(
         self,

@@ -63,6 +63,19 @@ class ProcessingSettings:
 
 
 @dataclass
+class CalibrationSettings:
+    #: Channel/alignment finding strategy: "single" (one projection of the whole
+    #: movie) or "robust" (best-of-N over frame chunks, acceptance-filtered).
+    mode: str = "single"
+    #: Frames per projection block for robust mode (projectionChunkSize).
+    chunk_size: int = 400
+    #: Passing candidates required before picking the best (minNumTopAlignments).
+    min_candidates: int = 10
+    #: Max blocks tried before giving up on a movie (maxNumTrials).
+    max_trials: int = 30
+
+
+@dataclass
 class AcceptanceSettings:
     #: Minimum reference-channel row extent as a fraction of image height,
     #: times the number of channels (stacked channels each span ~1/N).
@@ -98,6 +111,7 @@ _SECTIONS = {
     "io": IOSettings,
     "channels": ChannelSettings,
     "alignment": AlignmentSettings,
+    "calibration": CalibrationSettings,
     "acceptance": AcceptanceSettings,
     "processing": ProcessingSettings,
     "runtime": RuntimeSettings,
@@ -109,6 +123,7 @@ class Settings:
     io: IOSettings = field(default_factory=IOSettings)
     channels: ChannelSettings = field(default_factory=ChannelSettings)
     alignment: AlignmentSettings = field(default_factory=AlignmentSettings)
+    calibration: CalibrationSettings = field(default_factory=CalibrationSettings)
     acceptance: AcceptanceSettings = field(default_factory=AcceptanceSettings)
     processing: ProcessingSettings = field(default_factory=ProcessingSettings)
     runtime: RuntimeSettings = field(default_factory=RuntimeSettings)
@@ -215,6 +230,30 @@ class Settings:
             weight_channel_size=a.size_weight,
             weight_cross_corr=a.cross_corr_weight,
             cross_corr_norm=a.cross_corr_norm,
+        )
+
+    def build_calibrator(self):
+        """Construct the :class:`Calibrator` this config describes.
+
+        ``[calibration].mode = "robust"`` selects the best-of-N
+        :class:`~optomerge.calibration.RobustCalibrator`; anything else selects
+        the :class:`~optomerge.calibration.SingleProjectionCalibrator`.
+        """
+        from .calibration import RobustCalibrator, SingleProjectionCalibrator
+        layout = self.build_layout()
+        aligner = self.build_aligner()
+        criteria = self.build_acceptance()
+        c = self.calibration
+        if c.mode == "robust":
+            return RobustCalibrator(
+                layout=layout, aligner=aligner, criteria=criteria,
+                chunk_size=c.chunk_size, min_candidates=c.min_candidates,
+                max_trials=c.max_trials, verbose=self.runtime.verbose,
+            )
+        return SingleProjectionCalibrator(
+            layout=layout, aligner=aligner,
+            projection_frames=self.channels.projection_frames,
+            criteria=criteria, verbose=self.runtime.verbose,
         )
 
     def to_pipeline_kwargs(self) -> Dict[str, Any]:
