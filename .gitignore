@@ -39,6 +39,7 @@ MANIFEST
 venv/
 env/
 ENV/
+.optomerge/
 
 # ---------------------------------------------------------------------------
 # Jupyter notebooks — outputs and checkpoints
