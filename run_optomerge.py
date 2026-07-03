@@ -372,6 +372,13 @@ def main() -> None:
             predetermined = _calibrate_reference(cand, calibrator, logger)
         except AlignmentNotFoundError as exc:
             sys.exit(f"ERROR: predetermined reference did not pass acceptance: {exc}")
+        if not predetermined.accepted:
+            sys.exit("ERROR: predetermined reference failed acceptance: "
+                     + "; ".join(predetermined.reasons))
+        logger.info(f"  Predetermined transform(s): "
+                    + ", ".join(f"{n}: rot={np.degrees(t.rot):.3f}deg "
+                                f"t=({t.t1:.2f},{t.t2:.2f})"
+                                for n, t in predetermined.transforms.items()))
 
     def _pf_kwargs():
         return dict(
