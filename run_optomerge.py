@@ -35,11 +35,22 @@ Options
     --bunch-size N  Frames per processing block            (default: 100000)
     --use-scrub     Align on upsampled scrub images for sub-pixel accuracy
     --upscale N     Scrub upscaling factor when --use-scrub (default: 4)
+    --max-shift PX  Constrain the fitted translation to +/- PX px of the origin,
+                    ignoring spurious far-off correlation peaks (0 = off)
+    --robust        Use the robust best-of-N calibrator (chunk the movie, score
+                    each block, keep acceptance-passing candidates, pick the best)
     --reuse-alignment none|first|FILE
-                    Reuse channel layout + alignment transform across the batch.
-                    none (default): each movie independent.  first: first movie
-                    is the reference.  FILE: use that file as the reference.
-                    Intensity normalisation is always recomputed per movie.
+                    Conserve one alignment across each set (see --group-by).
+                    none (default): each movie independent.  first: each set's
+                    first movie is its reference.  FILE: use that movie as a
+                    predetermined reference for every set.  Intensity
+                    normalisation is always recomputed per movie.  A movie whose
+                    fit fails the acceptance criteria is rejected (not saved).
+    --group-by run|token|folder
+                    Partition movies into alignment sets (with --reuse-alignment):
+                    run (whole batch), token (filename marker), or folder.
+    --group-token REGEX
+                    Filename marker regex for --group-by token (e.g. "_ch\\d\\d_").
     --verbose       Print per-stage progress inside each file
     --dry-run       List files that would be processed, then exit
 
@@ -76,7 +87,15 @@ if _pkg.is_dir() and str(_pkg) not in sys.path:
     sys.path.insert(0, str(_pkg))
 
 try:
-    from optomerge import ChannelLayout, MergePipeline, PhaseCorrelationAligner, Settings
+    from optomerge import (
+        AlignmentNotFoundError,
+        Calibration,
+        ConservedCalibrator,
+        MergePipeline,
+        RawMovie,
+        Settings,
+        group_movies,
+    )
 except ImportError as e:
     sys.exit(
         "ERROR: Cannot import optomerge.\n"
@@ -84,26 +103,6 @@ except ImportError as e:
         "  optomerge/ package folder sits next to this script.\n"
         f"  Original error: {e}"
     )
-
-
-# ---------------------------------------------------------------------------
-# Shared-alignment pipeline: reuse a reference layout + transforms, but
-# recompute per-movie intensity limits (matches the original SharedAlignment).
-# ---------------------------------------------------------------------------
-
-class _SharedPipeline(MergePipeline):
-    def __init__(self, *args, shared_layout, shared_transforms, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._shared_layout = shared_layout
-        self._shared_transforms = shared_transforms
-
-    def calibrate(self, movie):  # type: ignore[override]
-        self.resolved_layout = self._shared_layout
-        mean_proj = movie.mean_projection(self.projection_frames)
-        proj_channels = {c.name: c.calibrate() for c in self.resolved_layout.split(mean_proj)}
-        self._limits = {name: (c.vmin, c.vmax) for name, c in proj_channels.items()}
-        self.transforms = dict(self._shared_transforms)
-        self._log(f"Reusing shared layout ({self.resolved_layout.name}) + transforms")
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +123,9 @@ _CLI_TO_FIELD = {
     "input": "input", "output": "output", "suffix": "suffix", "overwrite": "overwrite",
     "channel_order": "channel_order", "frames": "projection_frames",
     "bg_radius": "bg_radius", "bunch_size": "bunch_size",
-    "use_scrub": "use_scrub", "upscale": "upscale",
+    "use_scrub": "use_scrub", "upscale": "upscale", "max_shift": "max_shift",
+    "calibration_mode": "mode",
+    "group_by": "by", "group_token": "token_pattern",
     "reuse_alignment": "reuse_alignment", "verbose": "verbose", "dry_run": "dry_run",
 }
 
@@ -172,42 +173,60 @@ def process_file(
     src: Path,
     dst: Path,
     *,
-    layout: ChannelLayout,
-    aligner: PhaseCorrelationAligner,
+    calibrator,
     bunch_size: int,
     bg_radius: int,
     projection_frames: int | None,
     verbose: bool,
     logger: logging.Logger,
-    shared: tuple | None = None,
-    extract_shared: bool = False,
+    shared: "Calibration | None" = None,
 ) -> dict:
-    """Run the OOP pipeline on a single file.
+    """Calibrate, gate on acceptance, then merge one file.
 
-    ``shared`` is an optional ``(resolved_layout, transforms)`` pair to reuse.
-    When ``extract_shared`` is True the result includes the pipeline's resolved
-    layout + transforms so the caller can reuse them for later files.
+    ``shared`` is an optional reference :class:`Calibration` to reuse (conserve
+    alignment across a set); when given, its layout + transforms are applied and
+    only the per-movie intensity limits are recomputed. Otherwise the movie is
+    calibrated with ``calibrator`` and rejected if the fit fails acceptance
+    (robust calibration raises; single-projection sets ``accepted = False``).
     """
     result: dict = {
-        "src": str(src), "dst": str(dst), "success": False,
-        "duration": 0.0, "transforms": None, "shape": None,
-        "error": None, "shared": None,
+        "src": str(src), "dst": str(dst), "success": False, "rejected": False,
+        "duration": 0.0, "transforms": None, "shape": None, "score": float("nan"),
+        "error": None, "calibration": None,
     }
     t0 = time.perf_counter()
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)
+        active = (ConservedCalibrator(shared, projection_frames=projection_frames)
+                  if shared is not None else calibrator)
+        pipe = MergePipeline(source=src, calibrator=active, bunch_size=bunch_size,
+                             bg_radius=bg_radius, projection_frames=projection_frames,
+                             verbose=verbose)
 
-        common = dict(
-            source=src, layout=layout, aligner=aligner, bunch_size=bunch_size,
-            bg_radius=bg_radius, projection_frames=projection_frames, verbose=verbose,
-        )
-        if shared is not None:
-            pipe = _SharedPipeline(shared_layout=shared[0], shared_transforms=shared[1], **common)
-        else:
-            pipe = MergePipeline(**common)
+        movie = RawMovie.open(src)
+        try:
+            pipe.calibrate(movie)
+        except AlignmentNotFoundError as exc:
+            result["rejected"] = True
+            result["error"] = f"alignment rejected: {exc}"
+            logger.warning(f"  [REJECT] {exc}")
+            result["duration"] = time.perf_counter() - t0
+            return result
 
-        rgb = pipe.run(output=dst)
+        cal = pipe.calibration
+        result["calibration"] = cal
+        result["score"] = cal.score if cal is not None else float("nan")
 
+        # Gate freshly-fitted (non-conserved) movies on acceptance.
+        if shared is None and cal is not None and not cal.accepted:
+            result["rejected"] = True
+            reason = "; ".join(cal.reasons) or "failed acceptance"
+            result["error"] = f"alignment rejected: {reason}"
+            logger.warning(f"  [REJECT] {reason}")
+            result["duration"] = time.perf_counter() - t0
+            return result
+
+        rgb = pipe.merge(movie, output=dst)
         result["shape"] = tuple(rgb.to_array().shape)
         result["transforms"] = {
             name: {
@@ -219,17 +238,21 @@ def process_file(
             for name, t in pipe.transforms.items()
         }
         n_ch = len(pipe.resolved_layout.specs) if pipe.resolved_layout else 0
-        logger.info(f"  {n_ch} channel(s); transforms: {result['transforms'] or '(reference only)'}")
+        logger.info(f"  {n_ch} channel(s), score={result['score']:.4f}; "
+                    f"transforms: {result['transforms'] or '(reference only)'}")
         logger.info(f"  Saved -> {dst.name}  shape={result['shape']}")
-
-        if extract_shared and pipe.resolved_layout is not None:
-            result["shared"] = (pipe.resolved_layout, dict(pipe.transforms))
         result["success"] = True
     except Exception:
         result["error"] = traceback.format_exc()
         logger.error(f"  FAILED:\n{result['error']}")
     result["duration"] = time.perf_counter() - t0
     return result
+
+
+def _calibrate_reference(path: Path, calibrator, logger: logging.Logger) -> "Calibration":
+    """Compute a predetermined reference calibration from a movie file."""
+    logger.info(f"  Computing predetermined alignment from: {path.name}")
+    return calibrator.calibrate(RawMovie.open(path))
 
 
 # ---------------------------------------------------------------------------
@@ -260,8 +283,19 @@ def main() -> None:
     parser.add_argument("--bunch-size", type=int, default=S, metavar="N", dest="bunch_size")
     parser.add_argument("--use-scrub", action="store_true", default=S, dest="use_scrub")
     parser.add_argument("--upscale", type=int, default=S, metavar="N")
+    parser.add_argument("--max-shift", type=float, default=S, metavar="PX", dest="max_shift",
+                        help="constrain alignment translation to +/- PX px (0 = unconstrained)")
+    parser.add_argument("--robust", action="store_const", const="robust", default=S,
+                        dest="calibration_mode",
+                        help="use the robust best-of-N calibrator")
     parser.add_argument("--reuse-alignment", default=S, dest="reuse_alignment",
-                        metavar="none|first|FILE")
+                        metavar="none|first|FILE",
+                        help="conserve one alignment across each set (see --group-by)")
+    parser.add_argument("--group-by", default=S, choices=["run", "token", "folder"],
+                        dest="group_by",
+                        help="partition movies into alignment sets (with --reuse-alignment)")
+    parser.add_argument("--group-token", default=S, dest="group_token", metavar="REGEX",
+                        help="filename marker regex for --group-by token")
     parser.add_argument("--verbose", action="store_true", default=S)
     parser.add_argument("--dry-run", action="store_true", default=S, dest="dry_run")
     args = parser.parse_args()
@@ -302,104 +336,121 @@ def main() -> None:
     config_path = dst_root / "run_config.toml"
     config_path.write_text(settings.to_toml(), encoding="utf-8")
 
-    layout = settings.build_layout()
-    aligner = settings.build_aligner()
+    calibrator = settings.build_calibrator()
     reuse = settings.runtime.reuse_alignment
+    groups = group_movies(files, settings.grouping.by, settings.grouping.token_pattern)
 
     logger.info("=" * 70)
     logger.info("optomerge batch processor (OOP)")
     logger.info(f"  Input  : {src_root}")
     logger.info(f"  Output : {dst_root}")
-    logger.info(f"  Files  : {len(files)}")
+    logger.info(f"  Files  : {len(files)}  in {len(groups)} set(s)")
     logger.info(f"  Config : {', '.join(args.config) if args.config else '(built-in defaults)'}")
     logger.info(f"  Channel order : {settings.channels.channel_order}")
-    logger.info(f"  BG radius     : {settings.processing.bg_radius}   "
-                f"bunch size: {settings.processing.bunch_size}")
-    logger.info(f"  Aligner       : phase-correlation"
-                + (f" (scrub x{settings.alignment.upscale})" if settings.alignment.use_scrub else ""))
-    logger.info(f"  Reuse         : {reuse}")
+    logger.info(f"  Calibrator    : {settings.calibration.mode}"
+                + (f"  chunk={settings.calibration.chunk_size} "
+                   f"min_cands={settings.calibration.min_candidates} "
+                   f"max_trials={settings.calibration.max_trials}"
+                   if settings.calibration.mode == "robust" else ""))
+    logger.info(f"  BG radius     : {settings.processing.bg_radius}")
+    logger.info(f"  Bunch size    : {settings.processing.bunch_size}")
+    logger.info(f"  Conserve      : {reuse}"
+                + (f"  (group-by {settings.grouping.by})" if reuse != "none" else ""))
     if settings.channels.projection_frames:
         logger.info(f"  Projection frames: {settings.channels.projection_frames}")
     logger.info(f"  Resolved config saved to: {config_path.name}")
     logger.info("=" * 70)
 
-    # ---- Resolve the reference file for shared alignment ----
-    ref_file: Path | None = None
-    if reuse != "none":
-        if reuse == "first":
-            ref_file = files[0]
-        else:
-            cand = Path(reuse)
-            if not cand.is_absolute():
-                cand = (_here / reuse).resolve()
-            if not cand.exists():
-                matches = [f for f in files if f.name == cand.name]
-                if not matches:
-                    sys.exit(f"ERROR: reuse_alignment reference not found: {reuse}")
-                cand = matches[0]
-            ref_file = cand
-        logger.info(f"  Reference for shared alignment: {ref_file.relative_to(src_root)}")
+    # Predetermined alignment from a reference FILE (applied to every set).
+    predetermined: "Calibration | None" = None
+    if reuse not in ("none", "first"):
+        cand = Path(reuse)
+        if not cand.is_absolute():
+            cand = (_here / reuse).resolve()
+        if not cand.exists():
+            matches = [f for f in files if f.name == cand.name]
+            if not matches:
+                sys.exit(f"ERROR: reuse_alignment reference not found: {reuse}")
+            cand = matches[0]
+        try:
+            predetermined = _calibrate_reference(cand, calibrator, logger)
+        except AlignmentNotFoundError as exc:
+            sys.exit(f"ERROR: predetermined reference did not pass acceptance: {exc}")
+        if not predetermined.accepted:
+            sys.exit("ERROR: predetermined reference failed acceptance: "
+                     + "; ".join(predetermined.reasons))
+        logger.info(f"  Predetermined transform(s): "
+                    + ", ".join(f"{n}: rot={np.degrees(t.rot):.3f}deg "
+                                f"t=({t.t1:.2f},{t.t2:.2f})"
+                                for n, t in predetermined.transforms.items()))
 
-    def _common_kwargs():
+    def _pf_kwargs():
         return dict(
-            layout=layout, aligner=aligner, bunch_size=settings.processing.bunch_size,
+            calibrator=calibrator, bunch_size=settings.processing.bunch_size,
             bg_radius=settings.processing.bg_radius,
             projection_frames=settings.channels.projection_frames,
             verbose=settings.runtime.verbose, logger=logger,
         )
 
     results: list[dict] = []
-    shared: tuple | None = None
+    idx = 0
     t_batch = time.perf_counter()
 
-    # Process the reference first (if not already the first file) so its layout
-    # + transforms are available to the rest of the batch.
-    if ref_file is not None and ref_file != files[0]:
-        logger.info(f"\n[ref] {ref_file.relative_to(src_root)}")
-        ref_dst = _output_path(ref_file, src_root, dst_root, suffix)
-        if ref_dst.exists() and not overwrite:
-            logger.warning("  Reference output exists; reprocessing to extract shared alignment.")
-        r = process_file(ref_file, ref_dst, extract_shared=True, **_common_kwargs())
-        r["index"] = 0
-        results.append(r)
-        if r["success"] and r["shared"] is not None:
-            shared = r["shared"]
-        else:
-            logger.warning("  Reference failed — falling back to independent alignment.")
+    for gkey, members in groups:
+        set_shared = predetermined  # None unless reuse == FILE
+        label = "" if settings.grouping.by == "run" else f" [{gkey}]"
+        for src in members:
+            idx += 1
+            dst = _output_path(src, src_root, dst_root, suffix)
+            logger.info(f"\n[{idx}/{len(files)}]{label} {src.relative_to(src_root)}")
+            if dst.exists() and not overwrite:
+                logger.info("  [SKIP] output exists (use --overwrite)")
+                results.append({"src": str(src), "success": False, "skipped": True,
+                                "rejected": False, "error": None, "duration": 0.0})
+                continue
 
-    for idx, src in enumerate(files, 1):
-        dst = _output_path(src, src_root, dst_root, suffix)
-        logger.info(f"\n[{idx}/{len(files)}] {src.relative_to(src_root)}")
-        if dst.exists() and not overwrite:
-            logger.info("  [SKIP] output exists (use --overwrite)")
-            continue
-        is_ref = (src == ref_file)
-        r = process_file(
-            src, dst,
-            shared=None if is_ref else shared,
-            extract_shared=(is_ref and ref_file == files[0]),
-            **_common_kwargs(),
-        )
-        r["index"] = idx
-        results.append(r)
-        if is_ref and ref_file == files[0] and r["success"] and r["shared"] is not None and shared is None:
-            shared = r["shared"]
-        logger.info(f"  [{'OK' if r['success'] else 'FAILED'}] {_fmt_seconds(r['duration'])}")
+            if reuse == "none":
+                r = process_file(src, dst, shared=None, **_pf_kwargs())
+            elif set_shared is None:
+                # First movie of the set defines its alignment.
+                r = process_file(src, dst, shared=None, **_pf_kwargs())
+                if r["success"] and r.get("calibration") is not None:
+                    set_shared = r["calibration"]
+                elif r.get("rejected"):
+                    logger.warning("  set reference rejected; remaining movies in this "
+                                   "set will be aligned independently")
+            else:
+                r = process_file(src, dst, shared=set_shared, **_pf_kwargs())
+
+            r["index"] = idx
+            results.append(r)
+            status = "OK" if r["success"] else ("REJECT" if r.get("rejected") else "FAILED")
+            logger.info(f"  [{status}] {_fmt_seconds(r['duration'])}")
 
     # ---- Summary ----
     total = time.perf_counter() - t_batch
     n_ok = sum(1 for r in results if r["success"])
-    n_failed = sum(1 for r in results if not r["success"] and r.get("error"))
+    n_rejected = sum(1 for r in results if r.get("rejected"))
+    n_skipped = sum(1 for r in results if r.get("skipped"))
+    n_failed = sum(1 for r in results
+                   if not r["success"] and r.get("error") and not r.get("rejected"))
     logger.info("\n" + "=" * 70)
     logger.info("SUMMARY")
-    logger.info(f"  Processed : {len(results)}")
+    logger.info(f"  Files     : {len(results)}")
     logger.info(f"  Succeeded : {n_ok}")
+    logger.info(f"  Rejected  : {n_rejected}  (failed acceptance)")
+    logger.info(f"  Skipped   : {n_skipped}  (output existed)")
     logger.info(f"  Failed    : {n_failed}")
     logger.info(f"  Total time: {_fmt_seconds(total)}")
+    if n_rejected:
+        logger.info("\nRejected files:")
+        for r in results:
+            if r.get("rejected"):
+                logger.info(f"  - {r['src']}: {r.get('error')}")
     if n_failed:
         logger.info("\nFailed files:")
         for r in results:
-            if not r["success"] and r.get("error"):
+            if not r["success"] and r.get("error") and not r.get("rejected"):
                 logger.info(f"  - {r['src']}")
     logger.info(f"\nLog written to: {log_path}")
     logger.info("=" * 70)

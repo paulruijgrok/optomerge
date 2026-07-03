@@ -52,22 +52,69 @@ class AlignmentSettings:
     init_rot: float = 0.0
     init_s1: float = 1.0
     init_s2: float = 1.0
+    #: If > 0, constrain the fitted translation to ±max_shift px of the origin,
+    #: ignoring spurious far-off correlation peaks. 0 = unconstrained.
+    max_shift: float = 0.0
 
 
 @dataclass
 class ProcessingSettings:
     #: Background-subtraction structuring-element radius.
     bg_radius: int = 10
-    #: Frames per processing block (the FrameBunch granularity).
-    bunch_size: int = 100_000
+    #: Frames held in memory / processed per block (the FrameBunch granularity).
+    #: Small keeps memory bounded; ~100 mirrors the MATLAB reference.
+    bunch_size: int = 100
+
+
+@dataclass
+class CalibrationSettings:
+    #: Channel/alignment finding strategy: "single" (one projection of the whole
+    #: movie) or "robust" (best-of-N over frame chunks, acceptance-filtered).
+    mode: str = "single"
+    #: Frames per projection block for robust mode (projectionChunkSize).
+    chunk_size: int = 400
+    #: Passing candidates required before picking the best (minNumTopAlignments).
+    min_candidates: int = 10
+    #: Max blocks tried before giving up on a movie (maxNumTrials).
+    max_trials: int = 30
+
+
+@dataclass
+class AcceptanceSettings:
+    #: Minimum reference-channel row extent as a fraction of image height,
+    #: times the number of channels (stacked channels each span ~1/N).
+    min_size_row_frac: float = 0.7
+    #: Minimum reference-channel column extent as a fraction of image width.
+    min_size_col_frac: float = 0.85
+    #: Maximum allowed |t1|/|t2| translation between channels (pixels).
+    max_translation_px: float = 25.0
+    #: Maximum allowed |rotation| between channels (degrees).
+    max_rotation_deg: float = 2.0
+    #: Maximum allowed scale deviation |s - 1| * 100 (percent).
+    max_scale_pct: float = 2.0
+    #: Scoring weights (channel size vs cross-correlation peak).
+    size_weight: float = 1.0
+    cross_corr_weight: float = 3.0
+    #: Normalisation for the cross-correlation peak.
+    cross_corr_norm: float = 0.1
+
+
+@dataclass
+class GroupingSettings:
+    #: How to partition movies into sets that share one alignment (used when
+    #: runtime.reuse_alignment != "none"): "run" (whole batch is one set),
+    #: "token" (group by a regex marker in the filename), or "folder".
+    by: str = "run"
+    #: Regex marker for the "token" strategy (channel/date marker).
+    token_pattern: str = r"_ch\d\d_"
 
 
 @dataclass
 class RuntimeSettings:
-    #: Reuse channel layout + alignment transform across the batch:
-    #: "none" (independent per movie), "first" (first movie is the reference),
-    #: or a path/filename to use as the reference. Intensity limits are always
-    #: recomputed per movie.
+    #: Reuse channel layout + alignment transform across each set (see
+    #: [grouping]): "none" (independent per movie), "first" (each set's first
+    #: movie is its reference), or a path/filename to use as a predetermined
+    #: reference. Intensity limits are always recomputed per movie.
     reuse_alignment: str = "none"
     verbose: bool = False
     #: List the files that would be processed, then exit without doing work.
@@ -78,6 +125,9 @@ _SECTIONS = {
     "io": IOSettings,
     "channels": ChannelSettings,
     "alignment": AlignmentSettings,
+    "calibration": CalibrationSettings,
+    "acceptance": AcceptanceSettings,
+    "grouping": GroupingSettings,
     "processing": ProcessingSettings,
     "runtime": RuntimeSettings,
 }
@@ -88,6 +138,9 @@ class Settings:
     io: IOSettings = field(default_factory=IOSettings)
     channels: ChannelSettings = field(default_factory=ChannelSettings)
     alignment: AlignmentSettings = field(default_factory=AlignmentSettings)
+    calibration: CalibrationSettings = field(default_factory=CalibrationSettings)
+    acceptance: AcceptanceSettings = field(default_factory=AcceptanceSettings)
+    grouping: GroupingSettings = field(default_factory=GroupingSettings)
     processing: ProcessingSettings = field(default_factory=ProcessingSettings)
     runtime: RuntimeSettings = field(default_factory=RuntimeSettings)
 
@@ -178,7 +231,45 @@ class Settings:
         a = self.alignment
         return PhaseCorrelationAligner(
             init_rot=a.init_rot, init_s1=a.init_s1, init_s2=a.init_s2,
-            use_scrub=a.use_scrub, upscale=a.upscale,
+            use_scrub=a.use_scrub, upscale=a.upscale, max_shift=a.max_shift,
+        )
+
+    def build_acceptance(self):
+        """Construct the :class:`AcceptanceCriteria` this config describes."""
+        from .acceptance import AcceptanceCriteria
+        a = self.acceptance
+        return AcceptanceCriteria(
+            min_size_frac=(a.min_size_row_frac, a.min_size_col_frac),
+            max_translation_px=a.max_translation_px,
+            max_rotation_deg=a.max_rotation_deg,
+            max_scale_pct=a.max_scale_pct,
+            weight_channel_size=a.size_weight,
+            weight_cross_corr=a.cross_corr_weight,
+            cross_corr_norm=a.cross_corr_norm,
+        )
+
+    def build_calibrator(self):
+        """Construct the :class:`Calibrator` this config describes.
+
+        ``[calibration].mode = "robust"`` selects the best-of-N
+        :class:`~optomerge.calibration.RobustCalibrator`; anything else selects
+        the :class:`~optomerge.calibration.SingleProjectionCalibrator`.
+        """
+        from .calibration import RobustCalibrator, SingleProjectionCalibrator
+        layout = self.build_layout()
+        aligner = self.build_aligner()
+        criteria = self.build_acceptance()
+        c = self.calibration
+        if c.mode == "robust":
+            return RobustCalibrator(
+                layout=layout, aligner=aligner, criteria=criteria,
+                chunk_size=c.chunk_size, min_candidates=c.min_candidates,
+                max_trials=c.max_trials, verbose=self.runtime.verbose,
+            )
+        return SingleProjectionCalibrator(
+            layout=layout, aligner=aligner,
+            projection_frames=self.channels.projection_frames,
+            criteria=criteria, verbose=self.runtime.verbose,
         )
 
     def to_pipeline_kwargs(self) -> Dict[str, Any]:

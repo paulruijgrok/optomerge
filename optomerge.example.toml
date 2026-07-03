@@ -26,10 +26,35 @@ upscale = 4                            # scrub upscaling factor when use_scrub =
 init_rot = 0.0                         # initial guess: rotation (radians)
 init_s1 = 1.0                          # initial guess: scale (axis 1)
 init_s2 = 1.0                          # initial guess: scale (axis 2)
+max_shift = 0.0                        # constrain translation to +/- px (0 = unconstrained);
+                                       #   set ~30 when the true inter-channel shift is small
+
+[calibration]
+mode = "single"                        # single (one whole-movie projection) | robust (best-of-N over chunks)
+chunk_size = 400                       # frames per projection block (robust mode)
+min_candidates = 10                    # passing candidates before picking the best (robust mode)
+max_trials = 30                        # max blocks tried before giving up (robust mode)
+
+[acceptance]
+# Reject nonsensical channel detections / alignments (ported from alignRGB.m).
+min_size_row_frac = 0.7                # min reference-channel height / image height * n_channels
+min_size_col_frac = 0.85               # min reference-channel width / image width
+max_translation_px = 25.0              # max |t1|/|t2| between channels (pixels)
+max_rotation_deg = 2.0                 # max |rotation| between channels (degrees)
+max_scale_pct = 2.0                    # max scale deviation |s - 1| * 100 (percent)
+size_weight = 1.0                      # scoring weight: channel size
+cross_corr_weight = 3.0                # scoring weight: cross-correlation peak
+cross_corr_norm = 0.1                  # normalisation for the cross-correlation peak
+
+[grouping]
+# How movies are partitioned into sets that share one alignment (only used when
+# runtime.reuse_alignment != "none").
+by = "run"                             # run (whole batch) | token (filename marker) | folder
+token_pattern = "_ch\\d\\d_"           # regex marker for by = "token" (channel/date)
 
 [processing]
 bg_radius = 10                         # background-subtraction structuring-element radius
-bunch_size = 100000                    # frames per processing block (FrameBunch granularity)
+bunch_size = 100                       # frames held/processed per block (caps memory; ~100 like MATLAB)
 
 [runtime]
 reuse_alignment = "none"               # none | first | <reference file>: reuse layout+transform across the batch

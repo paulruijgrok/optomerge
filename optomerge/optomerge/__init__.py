@@ -36,6 +36,16 @@ from .layout import ChannelLayout, ChannelSpec
 from .transform import Transform
 from .registration import Aligner, PhaseCorrelationAligner
 from .io_backends import MovieReader, MovieWriter, TiffReader, TiffWriter
+from .acceptance import AcceptanceCriteria, AcceptanceResult, evaluate as evaluate_acceptance
+from .calibration import (
+    AlignmentNotFoundError,
+    Calibration,
+    Calibrator,
+    ConservedCalibrator,
+    RobustCalibrator,
+    SingleProjectionCalibrator,
+)
+from .grouping import group_movies, available_modes as grouping_modes
 from .pipeline import MergePipeline
 from .config import Settings
 
@@ -47,6 +57,10 @@ __all__ = [
     "Transform",
     "Aligner", "PhaseCorrelationAligner",
     "MovieReader", "MovieWriter", "TiffReader", "TiffWriter",
+    "AcceptanceCriteria", "AcceptanceResult", "evaluate_acceptance",
+    "Calibration", "Calibrator", "SingleProjectionCalibrator", "RobustCalibrator",
+    "ConservedCalibrator", "AlignmentNotFoundError",
+    "group_movies", "grouping_modes",
     "MergePipeline",
     "Settings",
 ]

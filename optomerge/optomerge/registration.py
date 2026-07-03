@@ -46,6 +46,12 @@ class PhaseCorrelationAligner(Aligner):
         Whether to align on upsampled ScrubImages for sub-pixel accuracy.
     upscale : int
         Scrub-image upscaling factor when ``use_scrub`` is True.
+    max_shift : float
+        If > 0, constrain the fitted translation to ``±max_shift`` pixels of the
+        origin, ignoring spurious far-off correlation peaks. Use when the true
+        inter-channel shift is small (e.g. two halves of one camera frame).
+        Default 0 = unconstrained. When ``use_scrub`` is set the constraint is
+        scaled by ``upscale`` to match the enlarged scrub-space coordinates.
     """
 
     def __init__(
@@ -55,23 +61,28 @@ class PhaseCorrelationAligner(Aligner):
         init_s2: float = 1.0,
         use_scrub: bool = False,
         upscale: int = 4,
+        max_shift: float = 0.0,
     ) -> None:
         self.init_rot = init_rot
         self.init_s1 = init_s1
         self.init_s2 = init_s2
         self.use_scrub = use_scrub
         self.upscale = upscale
+        self.max_shift = max_shift
 
     def align(self, reference: "Channel", moving: "Channel") -> Transform:
         if self.use_scrub:
             ref_img = reference.scrub_image(self.upscale).data
             mov_img = moving.scrub_image(self.upscale).data
+            max_shift = self.max_shift * self.upscale  # scrub-space coordinates
         else:
             ref_img = reference.normalized()
             mov_img = moving.normalized()
+            max_shift = self.max_shift
 
         t1, t2, rot, s1, s2, score = calculate_alignment(
-            ref_img, mov_img, self.init_rot, self.init_s1, self.init_s2
+            ref_img, mov_img, self.init_rot, self.init_s1, self.init_s2,
+            max_shift=max_shift,
         )
         transform = Transform(t1=t1, t2=t2, rot=rot, s1=s1, s2=s2, score=score)
 

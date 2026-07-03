@@ -24,7 +24,7 @@ def test_layering_later_wins():
     assert s.processing.bg_radius == 20
     assert s.channels.channel_order == "top_green_fils_bottom_red_heads"
     # untouched fields keep their defaults
-    assert s.processing.bunch_size == 100_000
+    assert s.processing.bunch_size == 100
     assert s.alignment.upscale == 4
 
 

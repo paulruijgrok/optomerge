@@ -111,9 +111,38 @@ built to survive an overnight run:
 
 ```bash
 python run_optomerge.py --channel-order auto --frames 200
-python run_optomerge.py --reuse-alignment first   # reuse one movie's alignment across the batch
 python run_optomerge.py --dry-run                 # list files, do nothing
 ```
+
+### Robust alignment, acceptance & conserving across a set
+
+Aligning two structurally-different channels is finicky — some movies align
+cleanly and others don't. Three features address this:
+
+- **Acceptance criteria** reject nonsensical fits (a channel far too small, or a
+  transform whose translation / rotation / scale is implausibly large). A
+  rejected movie is logged and skipped, not saved. Thresholds live in the
+  `[acceptance]` config section.
+- **Robust calibrator** (`--robust`) projects the movie in chunks, fits + scores
+  each, keeps only candidates that pass acceptance, and picks the best of N —
+  robust to a bad stretch of frames.
+- **Constrained peak search** (`--max-shift PX`) restricts the registration to a
+  small translation window, so a spurious far-off correlation peak can't win.
+  Use when the true inter-channel shift is small (two halves of one camera frame).
+
+When one movie in a session aligns well and others don't, **conserve** that
+alignment across a set: compute it once and apply it to the rest.
+
+```bash
+# Each _ch\d\d_ group's first movie defines the alignment; the rest reuse it
+python run_optomerge.py --reuse-alignment first --group-by token --robust --max-shift 30
+
+# Use one known-good movie as a predetermined reference for the whole batch
+python run_optomerge.py --reuse-alignment "good_movie.tif" --max-shift 30
+```
+
+Sets are partitioned by `--group-by run|token|folder`; intensity normalisation
+is always recomputed per movie, so only the geometric alignment is shared.
 
 ### Configuration & run provenance
 
@@ -152,7 +181,19 @@ it. The full test suite passes, including an end-to-end pipeline test on the
 sample movies.
 
 Registration currently supports one reference plus one moving channel via phase
-correlation; the layout/aligner/reader/writer seams are designed to make
+correlation, with acceptance criteria, a robust best-of-N calibrator, a
+constrained peak search, and conserve-alignment across movie sets (see above).
+The layout/aligner/reader/writer/calibrator seams are designed to make
 additional channel arrangements, alignment strategies, and file formats drop-in
-extensions. Not yet ported from the older procedural pipeline: GPU acceleration,
-file-level parallelism, and the multi-chunk "robust" alignment mode.
+extensions.
+
+Known limitations / future work:
+
+- **`--channel-order auto` is unreliable** — it often fails to split the two
+  stacked channels; forcing an explicit order is recommended for now.
+- **Channel-segmentation crop bounds** (`find_channel_bounds`) can be imprecise;
+  improving segmentation quality is the main open area.
+- Not yet ported from the procedural pipeline: GPU acceleration and file-level
+  parallelism. Predetermined alignment can be taken from a reference movie
+  (`--reuse-alignment FILE`); saving/loading a fitted alignment to a sidecar
+  file is not yet implemented.
