@@ -35,6 +35,8 @@ Options
     --bunch-size N  Frames per processing block            (default: 100000)
     --use-scrub     Align on upsampled scrub images for sub-pixel accuracy
     --upscale N     Scrub upscaling factor when --use-scrub (default: 4)
+    --max-shift PX  Constrain the fitted translation to +/- PX px of the origin,
+                    ignoring spurious far-off correlation peaks (0 = off)
     --robust        Use the robust best-of-N calibrator (chunk the movie, score
                     each block, keep acceptance-passing candidates, pick the best)
     --reuse-alignment none|first|FILE
@@ -121,7 +123,7 @@ _CLI_TO_FIELD = {
     "input": "input", "output": "output", "suffix": "suffix", "overwrite": "overwrite",
     "channel_order": "channel_order", "frames": "projection_frames",
     "bg_radius": "bg_radius", "bunch_size": "bunch_size",
-    "use_scrub": "use_scrub", "upscale": "upscale",
+    "use_scrub": "use_scrub", "upscale": "upscale", "max_shift": "max_shift",
     "calibration_mode": "mode",
     "group_by": "by", "group_token": "token_pattern",
     "reuse_alignment": "reuse_alignment", "verbose": "verbose", "dry_run": "dry_run",
@@ -281,6 +283,8 @@ def main() -> None:
     parser.add_argument("--bunch-size", type=int, default=S, metavar="N", dest="bunch_size")
     parser.add_argument("--use-scrub", action="store_true", default=S, dest="use_scrub")
     parser.add_argument("--upscale", type=int, default=S, metavar="N")
+    parser.add_argument("--max-shift", type=float, default=S, metavar="PX", dest="max_shift",
+                        help="constrain alignment translation to +/- PX px (0 = unconstrained)")
     parser.add_argument("--robust", action="store_const", const="robust", default=S,
                         dest="calibration_mode",
                         help="use the robust best-of-N calibrator")

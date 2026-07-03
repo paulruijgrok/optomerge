@@ -44,6 +44,7 @@ def calculate_alignment(
     init_rot: float = 0.0,
     init_s1: float = 1.0,
     init_s2: float = 1.0,
+    max_shift: float = 0.0,
 ) -> Tuple[float, float, float, float, float, float]:
     """Calculate the affine alignment between two images.
 
@@ -66,6 +67,12 @@ def calculate_alignment(
         Initial guess for the x-scale factor.  Default 1.
     init_s2 : float, optional
         Initial guess for the y-scale factor.  Default 1.
+    max_shift : float, optional
+        If > 0, constrain the phase-correlation peak to translations within
+        ``±max_shift`` pixels of the origin (in either axis), so a spurious
+        far-off correlation peak cannot win. Use when the true inter-channel
+        shift is known to be small (e.g. two halves of one camera frame).
+        Default 0 = unconstrained (exact MATLAB behaviour).
 
     Returns
     -------
@@ -81,7 +88,7 @@ def calculate_alignment(
         np.asarray(im2, dtype=np.float64),
     )
     rot, s1, s2, t1, t2, best_score = _calc_scale_rotation(
-        nim1, nim2, init_rot, init_s1, init_s2
+        nim1, nim2, init_rot, init_s1, init_s2, max_shift=max_shift
     )
     return t1, t2, rot, s1, s2, best_score
 
@@ -97,6 +104,7 @@ def _calc_scale_rotation(
     init_s1: float,
     init_s2: float,
     verbose: bool = False,
+    max_shift: float = 0.0,
 ) -> Tuple[float, float, float, float, float, float]:
     """Iterative scale and rotation refinement using phase-correlation.
 
@@ -152,7 +160,7 @@ def _calc_scale_rotation(
             best_ind = 0
             for idx, sc in enumerate(s1_range):
                 tmp = transform_image(im2, curr_rot, sc, curr_s2)
-                score, offset = _calc_fft2d_align(im1, tmp)
+                score, offset = _calc_fft2d_align(im1, tmp, max_shift=max_shift)
                 if score > local_best_score:
                     local_best_score = score
                     best_score = score
@@ -174,7 +182,7 @@ def _calc_scale_rotation(
             best_ind = 0
             for idx, sc in enumerate(s2_range):
                 tmp = transform_image(im2, curr_rot, curr_s1, sc)
-                score, offset = _calc_fft2d_align(im1, tmp)
+                score, offset = _calc_fft2d_align(im1, tmp, max_shift=max_shift)
                 if score > local_best_score:
                     local_best_score = score
                     best_score = score
@@ -196,7 +204,7 @@ def _calc_scale_rotation(
             best_ind = 0
             for idx, sc in enumerate(rot_range):
                 tmp = transform_image(im2, sc, curr_s1, curr_s2)
-                score, offset = _calc_fft2d_align(im1, tmp)
+                score, offset = _calc_fft2d_align(im1, tmp, max_shift=max_shift)
                 if score > local_best_score:
                     local_best_score = score
                     best_score = score
@@ -226,11 +234,40 @@ def _calc_scale_rotation(
 # FFT phase-correlation alignment
 # ---------------------------------------------------------------------------
 
+def _peak_index(phase_map: np.ndarray, max_shift: float = 0.0) -> Tuple[int, int]:
+    """Return the ``(row, col)`` of the phase-correlation peak.
+
+    With ``max_shift <= 0`` this is the global argmax (exact MATLAB behaviour).
+    With ``max_shift > 0`` the search is restricted to translations within
+    ``±max_shift`` pixels of the origin along each axis, accounting for FFT
+    periodicity (a shift of ``-k`` appears at index ``N - k``). This prevents a
+    spurious far-off correlation peak from winning when the true inter-channel
+    shift is known to be small.
+    """
+    if not max_shift or max_shift <= 0:
+        return np.unravel_index(int(np.argmax(phase_map)), phase_map.shape)
+
+    H, W = phase_map.shape
+    rows = np.arange(H)
+    cols = np.arange(W)
+    # Unwrap indices to signed shifts: [0..N/2] stay, (N/2..N) become negative.
+    urow = np.where(rows <= H // 2, rows, rows - H)
+    ucol = np.where(cols <= W // 2, cols, cols - W)
+    row_ok = np.abs(urow) <= max_shift
+    col_ok = np.abs(ucol) <= max_shift
+    mask = np.outer(row_ok, col_ok)
+    if not mask.any():  # max_shift smaller than one pixel window; fall back
+        return np.unravel_index(int(np.argmax(phase_map)), phase_map.shape)
+    masked = np.where(mask, phase_map, -np.inf)
+    return np.unravel_index(int(np.argmax(masked)), masked.shape)
+
+
 def _calc_fft2d_align(
     nim1: np.ndarray,
     nim2: np.ndarray,
     n_neighbor: int = 4,
     fine_step: float = 0.1,
+    max_shift: float = 0.0,
 ) -> Tuple[float, np.ndarray]:
     """Sub-pixel translational alignment via normalised phase correlation.
 
@@ -271,9 +308,8 @@ def _calc_fft2d_align(
 
     phase_map = np.fft.ifft2(fpower).real  # (H, W)
 
-    # Coarse peak
-    flat_idx = np.argmax(phase_map)
-    off1, off2 = np.unravel_index(flat_idx, phase_map.shape)  # (row, col)
+    # Coarse peak (optionally constrained to a small-shift window)
+    off1, off2 = _peak_index(phase_map, max_shift=max_shift)  # (row, col)
 
     # Extract neighbourhood (with circular wrap)
     nn = n_neighbor

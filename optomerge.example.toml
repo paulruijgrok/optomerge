@@ -26,6 +26,8 @@ upscale = 4                            # scrub upscaling factor when use_scrub =
 init_rot = 0.0                         # initial guess: rotation (radians)
 init_s1 = 1.0                          # initial guess: scale (axis 1)
 init_s2 = 1.0                          # initial guess: scale (axis 2)
+max_shift = 0.0                        # constrain translation to +/- px (0 = unconstrained);
+                                       #   set ~30 when the true inter-channel shift is small
 
 [calibration]
 mode = "single"                        # single (one whole-movie projection) | robust (best-of-N over chunks)

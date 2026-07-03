@@ -52,6 +52,9 @@ class AlignmentSettings:
     init_rot: float = 0.0
     init_s1: float = 1.0
     init_s2: float = 1.0
+    #: If > 0, constrain the fitted translation to ±max_shift px of the origin,
+    #: ignoring spurious far-off correlation peaks. 0 = unconstrained.
+    max_shift: float = 0.0
 
 
 @dataclass
@@ -228,7 +231,7 @@ class Settings:
         a = self.alignment
         return PhaseCorrelationAligner(
             init_rot=a.init_rot, init_s1=a.init_s1, init_s2=a.init_s2,
-            use_scrub=a.use_scrub, upscale=a.upscale,
+            use_scrub=a.use_scrub, upscale=a.upscale, max_shift=a.max_shift,
         )
 
     def build_acceptance(self):
