@@ -59,7 +59,7 @@ class MergePipeline:
         source: str | Path,
         layout: Optional[ChannelLayout] = None,
         aligner: Optional[Aligner] = None,
-        bunch_size: int = 100_000,
+        bunch_size: int = 100,
         bg_radius: int = 10,
         projection_frames: Optional[int] = None,
         verbose: bool = False,

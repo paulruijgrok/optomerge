@@ -58,8 +58,9 @@ class AlignmentSettings:
 class ProcessingSettings:
     #: Background-subtraction structuring-element radius.
     bg_radius: int = 10
-    #: Frames per processing block (the FrameBunch granularity).
-    bunch_size: int = 100_000
+    #: Frames held in memory / processed per block (the FrameBunch granularity).
+    #: Small keeps memory bounded; ~100 mirrors the MATLAB reference.
+    bunch_size: int = 100
 
 
 @dataclass

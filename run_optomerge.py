@@ -348,8 +348,8 @@ def main() -> None:
                    f"min_cands={settings.calibration.min_candidates} "
                    f"max_trials={settings.calibration.max_trials}"
                    if settings.calibration.mode == "robust" else ""))
-    logger.info(f"  BG radius     : {settings.processing.bg_radius}   "
-                f"bunch size: {settings.processing.bunch_size}")
+    logger.info(f"  BG radius     : {settings.processing.bg_radius}")
+    logger.info(f"  Bunch size    : {settings.processing.bunch_size}")
     logger.info(f"  Conserve      : {reuse}"
                 + (f"  (group-by {settings.grouping.by})" if reuse != "none" else ""))
     if settings.channels.projection_frames:

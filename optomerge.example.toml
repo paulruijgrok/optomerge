@@ -52,7 +52,7 @@ token_pattern = "_ch\\d\\d_"           # regex marker for by = "token" (channel/
 
 [processing]
 bg_radius = 10                         # background-subtraction structuring-element radius
-bunch_size = 100000                    # frames per processing block (FrameBunch granularity)
+bunch_size = 100                       # frames held/processed per block (caps memory; ~100 like MATLAB)
 
 [runtime]
 reuse_alignment = "none"               # none | first | <reference file>: reuse layout+transform across the batch
