@@ -44,6 +44,7 @@ from .calibration import (
     RobustCalibrator,
     SingleProjectionCalibrator,
 )
+from .grouping import group_movies, available_modes as grouping_modes
 from .pipeline import MergePipeline
 from .config import Settings
 
@@ -58,6 +59,7 @@ __all__ = [
     "AcceptanceCriteria", "AcceptanceResult", "evaluate_acceptance",
     "Calibration", "Calibrator", "SingleProjectionCalibrator", "RobustCalibrator",
     "AlignmentNotFoundError",
+    "group_movies", "grouping_modes",
     "MergePipeline",
     "Settings",
 ]

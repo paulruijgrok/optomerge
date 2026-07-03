@@ -44,6 +44,12 @@ size_weight = 1.0                      # scoring weight: channel size
 cross_corr_weight = 3.0                # scoring weight: cross-correlation peak
 cross_corr_norm = 0.1                  # normalisation for the cross-correlation peak
 
+[grouping]
+# How movies are partitioned into sets that share one alignment (only used when
+# runtime.reuse_alignment != "none").
+by = "run"                             # run (whole batch) | token (filename marker) | folder
+token_pattern = "_ch\\d\\d_"           # regex marker for by = "token" (channel/date)
+
 [processing]
 bg_radius = 10                         # background-subtraction structuring-element radius
 bunch_size = 100000                    # frames per processing block (FrameBunch granularity)

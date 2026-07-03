@@ -96,11 +96,21 @@ class AcceptanceSettings:
 
 
 @dataclass
+class GroupingSettings:
+    #: How to partition movies into sets that share one alignment (used when
+    #: runtime.reuse_alignment != "none"): "run" (whole batch is one set),
+    #: "token" (group by a regex marker in the filename), or "folder".
+    by: str = "run"
+    #: Regex marker for the "token" strategy (channel/date marker).
+    token_pattern: str = r"_ch\d\d_"
+
+
+@dataclass
 class RuntimeSettings:
-    #: Reuse channel layout + alignment transform across the batch:
-    #: "none" (independent per movie), "first" (first movie is the reference),
-    #: or a path/filename to use as the reference. Intensity limits are always
-    #: recomputed per movie.
+    #: Reuse channel layout + alignment transform across each set (see
+    #: [grouping]): "none" (independent per movie), "first" (each set's first
+    #: movie is its reference), or a path/filename to use as a predetermined
+    #: reference. Intensity limits are always recomputed per movie.
     reuse_alignment: str = "none"
     verbose: bool = False
     #: List the files that would be processed, then exit without doing work.
@@ -113,6 +123,7 @@ _SECTIONS = {
     "alignment": AlignmentSettings,
     "calibration": CalibrationSettings,
     "acceptance": AcceptanceSettings,
+    "grouping": GroupingSettings,
     "processing": ProcessingSettings,
     "runtime": RuntimeSettings,
 }
@@ -125,6 +136,7 @@ class Settings:
     alignment: AlignmentSettings = field(default_factory=AlignmentSettings)
     calibration: CalibrationSettings = field(default_factory=CalibrationSettings)
     acceptance: AcceptanceSettings = field(default_factory=AcceptanceSettings)
+    grouping: GroupingSettings = field(default_factory=GroupingSettings)
     processing: ProcessingSettings = field(default_factory=ProcessingSettings)
     runtime: RuntimeSettings = field(default_factory=RuntimeSettings)
 
