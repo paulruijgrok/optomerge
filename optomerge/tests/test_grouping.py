@@ -20,7 +20,7 @@ PATHS = [
 def test_run_mode_is_one_set():
     groups = group_movies(PATHS, by="run")
     assert len(groups) == 1
-    key, members = groups[0]
+    _key, members = groups[0]
     assert len(members) == len(PATHS)
 
 
