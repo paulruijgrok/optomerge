@@ -8,9 +8,15 @@ resolve channel layout, fit the alignment transform, assemble the aligned RGB
 movie — and saves a diagnostic PNG after each stage so the result of every step
 can be inspected by eye.
 
+Parameters resolve in three layers, each overriding the previous: built-in
+defaults, then any ``--config`` TOML file(s), then explicit CLI flags. The
+resolved config is written to ``<output>/run_config.toml`` (``--file`` and
+``--no-diag`` are script-only and not part of the config).
+
 Usage
 -----
     python test_pipeline.py                      # scan test_data/
+    python test_pipeline.py --config my_run.toml
     python test_pipeline.py --file "movie 01.tif"
     python test_pipeline.py --no-diag --frames 200
     python test_pipeline.py --dry-run
@@ -49,6 +55,7 @@ try:
         PhaseCorrelationAligner,
         RawMovie,
         RGBMovie,
+        Settings,
     )
     from optomerge._kernels.transform import zero_pad_images
 except ImportError as exc:
@@ -57,6 +64,16 @@ except ImportError as exc:
         f"Install it with:  pip install -e optomerge/\n"
         f"or ensure the optomerge/ package folder is next to this script."
     )
+
+# argparse dests -> flat Settings fields. These flags default to argparse.SUPPRESS
+# so only explicitly-passed flags override the config file. --file and --no-diag
+# are script-only (not config settings) and keep normal defaults.
+_CLI_TO_FIELD = {
+    "input": "input", "output": "output",
+    "channel_order": "channel_order", "frames": "projection_frames",
+    "bg_radius": "bg_radius", "use_scrub": "use_scrub", "upscale": "upscale",
+    "verbose": "verbose", "dry_run": "dry_run",
+}
 
 _CHANNEL_ORDERS = (
     "auto",
@@ -328,42 +345,57 @@ def process_file(
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
+    S = argparse.SUPPRESS
     p = argparse.ArgumentParser(
         description="Step-by-step diagnostic test for the optomerge pipeline (OOP API).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    p.add_argument("--input", default="test_data", metavar="DIR",
+    # Config file(s): merged left-to-right; explicit CLI flags override them.
+    p.add_argument("--config", nargs="+", default=None, metavar="FILE",
+                   help="TOML config file(s); later files and CLI flags override earlier ones")
+    # Config-driven flags default to SUPPRESS (see _CLI_TO_FIELD).
+    p.add_argument("--input", default=S, metavar="DIR",
                    help="Root directory of raw movies (default: test_data)")
-    p.add_argument("--output", default="output_temp", metavar="DIR",
+    p.add_argument("--output", default=S, metavar="DIR",
                    help="Root directory for output (default: output_temp)")
+    p.add_argument("--channel-order", default=S, choices=_CHANNEL_ORDERS,
+                   dest="channel_order", metavar="STR", help="Channel order (default: auto)")
+    p.add_argument("--frames", type=int, default=S, metavar="N",
+                   help="Max frames for projection (default: all)")
+    p.add_argument("--bg-radius", type=int, default=S, metavar="N", dest="bg_radius",
+                   help="Background subtraction radius (default: 10)")
+    p.add_argument("--use-scrub", action="store_true", default=S, dest="use_scrub",
+                   help="Align on upsampled scrub images for sub-pixel accuracy")
+    p.add_argument("--upscale", type=int, default=S, metavar="N",
+                   help="Scrub upscaling factor when --use-scrub (default: 4)")
+    p.add_argument("--verbose", action="store_true", default=S,
+                   help="Show detailed per-step progress")
+    p.add_argument("--dry-run", action="store_true", default=S, dest="dry_run",
+                   help="List files that would be processed, then exit")
+    # Script-only flags (not config settings).
     p.add_argument("--file", default=None, metavar="FILE",
                    help="Process a single file instead of scanning --input")
-    p.add_argument("--channel-order", default="auto", choices=_CHANNEL_ORDERS,
-                   dest="channel_order", metavar="STR", help="Channel order (default: auto)")
-    p.add_argument("--frames", type=int, default=None, metavar="N",
-                   help="Max frames for projection (default: all)")
-    p.add_argument("--bg-radius", type=int, default=10, metavar="N", dest="bg_radius",
-                   help="Background subtraction radius (default: 10)")
-    p.add_argument("--use-scrub", action="store_true", dest="use_scrub",
-                   help="Align on upsampled scrub images for sub-pixel accuracy")
-    p.add_argument("--upscale", type=int, default=4, metavar="N",
-                   help="Scrub upscaling factor when --use-scrub (default: 4)")
     p.add_argument("--no-diag", action="store_true",
                    help="Skip saving diagnostic PNG images")
-    p.add_argument("--verbose", action="store_true",
-                   help="Show detailed per-step progress")
-    p.add_argument("--dry-run", action="store_true",
-                   help="List files that would be processed, then exit")
     args = p.parse_args()
 
-    dst_root = (_here / args.output).resolve()
+    # Resolution order: built-in defaults -> config file(s) -> explicit CLI flags.
+    try:
+        settings = Settings.from_toml(*args.config) if args.config else Settings()
+    except (OSError, KeyError, RuntimeError) as exc:
+        sys.exit(f"ERROR: could not load config: {exc}")
+    overrides = {_CLI_TO_FIELD[dest]: val for dest, val in vars(args).items()
+                 if dest in _CLI_TO_FIELD}
+    settings = settings.with_overrides(**overrides)
+
+    dst_root = (_here / settings.io.output).resolve()
 
     if args.file:
         files = [Path(args.file).resolve()]
         src_root = files[0].parent
     else:
-        src_root = (_here / args.input).resolve()
+        src_root = (_here / settings.io.input).resolve()
         if not src_root.is_dir():
             sys.exit(f"Input directory not found: {src_root}")
         files = sorted(
@@ -373,7 +405,7 @@ def main():
         if not files:
             sys.exit(f"No .tif files found under {src_root}")
 
-    if args.dry_run:
+    if settings.runtime.dry_run:
         print(f"Dry run — {len(files)} file(s) found:\n")
         for f in files:
             try:
@@ -384,13 +416,20 @@ def main():
             print(f"  {rel}\n    -> {dst.relative_to(dst_root.parent)}/\n")
         return
 
+    # Provenance: record the fully-resolved config next to the output.
+    dst_root.mkdir(parents=True, exist_ok=True)
+    (dst_root / "run_config.toml").write_text(settings.to_toml(), encoding="utf-8")
+
     print("=" * 68)
     print("optomerge diagnostic test pipeline (OOP)")
     print(f"  Input : {src_root}")
     print(f"  Output: {dst_root}")
     print(f"  Files : {len(files)}")
-    print(f"  Channel order: {args.channel_order}   BG radius: {args.bg_radius}")
-    print(f"  Aligner: phase-correlation" + (f" (scrub x{args.upscale})" if args.use_scrub else ""))
+    print(f"  Config: {', '.join(args.config) if args.config else '(built-in defaults)'}")
+    print(f"  Channel order: {settings.channels.channel_order}   "
+          f"BG radius: {settings.processing.bg_radius}")
+    print(f"  Aligner: phase-correlation"
+          + (f" (scrub x{settings.alignment.upscale})" if settings.alignment.use_scrub else ""))
     print(f"  Diag images: {'no' if args.no_diag else 'yes'}")
     print("=" * 68)
 
@@ -405,9 +444,11 @@ def main():
         print(f"\n[{idx}/{len(files)}] {rel}")
         result = process_file(
             src=src, dst_dir=dst_dir,
-            channel_order=args.channel_order, projection_frames=args.frames,
-            bg_radius=args.bg_radius, use_scrub=args.use_scrub, upscale=args.upscale,
-            save_diag=not args.no_diag, verbose=args.verbose,
+            channel_order=settings.channels.channel_order,
+            projection_frames=settings.channels.projection_frames,
+            bg_radius=settings.processing.bg_radius,
+            use_scrub=settings.alignment.use_scrub, upscale=settings.alignment.upscale,
+            save_diag=not args.no_diag, verbose=settings.runtime.verbose,
         )
         results.append(result)
         mins, secs = divmod(int(result["duration"]), 60)

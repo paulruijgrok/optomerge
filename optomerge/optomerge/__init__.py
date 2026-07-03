@@ -37,6 +37,7 @@ from .transform import Transform
 from .registration import Aligner, PhaseCorrelationAligner
 from .io_backends import MovieReader, MovieWriter, TiffReader, TiffWriter
 from .pipeline import MergePipeline
+from .config import Settings
 
 __all__ = [
     "Movie", "RawMovie", "RGBMovie",
@@ -47,4 +48,5 @@ __all__ = [
     "Aligner", "PhaseCorrelationAligner",
     "MovieReader", "MovieWriter", "TiffReader", "TiffWriter",
     "MergePipeline",
+    "Settings",
 ]

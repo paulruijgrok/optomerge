@@ -1,0 +1,37 @@
+# Example optomerge configuration.
+#
+#   python run_optomerge.py --config optomerge.example.toml
+#
+# Every section and key is optional -- only the keys you set are applied; the
+# rest keep their defaults. Any explicit CLI flag overrides the value here, and
+# multiple --config files layer left-to-right. Works on Python 3.9+ (uses stdlib
+# tomllib on 3.11+, or the tomli backport, installed automatically, on 3.9/3.10).
+#
+# Each run also writes its fully-resolved config to <output>/run_config.toml,
+# which you can pass straight back in with --config to reproduce that run.
+
+[io]
+input = "test_data"                    # root directory of raw movies (scanned recursively)
+output = "output_temp"                 # output root; input folder structure is mirrored
+suffix = "_aligned"                    # inserted before the .tif extension of each output
+overwrite = false                      # re-process files whose output already exists
+
+[channels]
+channel_order = "auto"                 # auto | top_green_fils_bottom_red_heads | top_red_heads_bottom_green_fils
+# projection_frames = 200              # frames used for detection/alignment (unset = all frames)
+
+[alignment]
+use_scrub = false                      # align on upsampled scrub images (sub-pixel accuracy)
+upscale = 4                            # scrub upscaling factor when use_scrub = true
+init_rot = 0.0                         # initial guess: rotation (radians)
+init_s1 = 1.0                          # initial guess: scale (axis 1)
+init_s2 = 1.0                          # initial guess: scale (axis 2)
+
+[processing]
+bg_radius = 10                         # background-subtraction structuring-element radius
+bunch_size = 100000                    # frames per processing block (FrameBunch granularity)
+
+[runtime]
+reuse_alignment = "none"               # none | first | <reference file>: reuse layout+transform across the batch
+verbose = false
+dry_run = false                        # list files that would be processed, then exit

@@ -7,10 +7,15 @@ breakdown of where the time goes. Drives the object-oriented API stage by stage
 (``RawMovie`` -> projections -> ``ChannelLayout.resolve`` -> ``Aligner.align``
 -> ``RGBMovie.from_channels``).
 
+Pipeline parameters come from built-in defaults, optional ``--config`` TOML
+file(s), then explicit CLI flags (each layer overriding the previous). The
+positional movie path is script-only.
+
 Usage
 -----
     python profile_pipeline.py "test_data/MyLOVChar4/ch3/movie 01.tif"
     python profile_pipeline.py "test_data/.../movie 01.tif" --frames 100
+    python profile_pipeline.py "movie 01.tif" --config my_run.toml
 
 The script writes no output files — it only measures time.
 """
@@ -28,7 +33,21 @@ _pkg = _here / "optomerge"
 if _pkg.is_dir() and str(_pkg) not in sys.path:
     sys.path.insert(0, str(_pkg))
 
-from optomerge import ChannelLayout, PhaseCorrelationAligner, RawMovie, RGBMovie
+from optomerge import RawMovie, RGBMovie, Settings
+
+# argparse dests -> flat Settings fields (all default to argparse.SUPPRESS so
+# only explicitly-passed flags override the config file). `file` is script-only.
+_CLI_TO_FIELD = {
+    "channel_order": "channel_order", "frames": "projection_frames",
+    "bg_radius": "bg_radius", "use_scrub": "use_scrub", "upscale": "upscale",
+    "verbose": "verbose",
+}
+
+_CHANNEL_ORDERS = (
+    "auto",
+    "top_green_fils_bottom_red_heads",
+    "top_red_heads_bottom_green_fils",
+)
 
 # ── timer ───────────────────────────────────────────────────────────────────
 
@@ -46,7 +65,8 @@ def timed(label: str):
 
 # ── main profiling run ───────────────────────────────────────────────────────
 
-def profile(src: Path, max_frames: int | None):
+def profile(src: Path, settings: Settings):
+    max_frames = settings.channels.projection_frames
     print(f"\nProfiling: {src.name}")
     print("=" * 64)
 
@@ -64,12 +84,12 @@ def profile(src: Path, max_frames: int | None):
 
     # 3. Resolve the channel layout (segmentation) -------------------------- #
     with timed("3. ChannelLayout.resolve (k-means + line search)"):
-        layout = ChannelLayout.auto().resolve(max_proj, mean_proj, verbose=False)
+        layout = settings.build_layout().resolve(max_proj, mean_proj, verbose=False)
     two_ch = len(layout.specs) > 1
     print(f"     -> {'two channels' if two_ch else 'one channel'}")
 
     # 4. Calibrate channels + fit the alignment transform ------------------- #
-    aligner = PhaseCorrelationAligner()
+    aligner = settings.build_aligner()
     with timed("4. aligner.align (scale/rot FFT search)"):
         proj_channels = {c.name: c.calibrate() for c in layout.split(mean_proj)}
         limits = {n: (c.vmin, c.vmax) for n, c in proj_channels.items()}
@@ -88,7 +108,7 @@ def profile(src: Path, max_frames: int | None):
             ch.vmin, ch.vmax = limits[ch.name]
             if ch.name in transforms:
                 ch.transform = transforms[ch.name]
-        rgb = RGBMovie.from_channels(channels, transforms, bg_radius=10)
+        rgb = RGBMovie.from_channels(channels, transforms, bg_radius=settings.processing.bg_radius)
     out = rgb.to_array()
     print(f"     -> output shape: {out.shape}")
 
@@ -110,17 +130,37 @@ def profile(src: Path, max_frames: int | None):
 
 
 def main():
+    S = argparse.SUPPRESS
     ap = argparse.ArgumentParser(description="Profile the optomerge pipeline (OOP API).")
     ap.add_argument("file", nargs="?", default=None, help="Path to a TIFF movie file")
-    ap.add_argument("--frames", type=int, default=None,
+    ap.add_argument("--config", nargs="+", default=None, metavar="FILE",
+                    help="TOML config file(s); later files and CLI flags override earlier ones")
+    ap.add_argument("--channel-order", default=S, choices=_CHANNEL_ORDERS,
+                    dest="channel_order", metavar="STR", help="Channel order (default: auto)")
+    ap.add_argument("--frames", type=int, default=S,
                     help="Max frames used for projections/alignment (default: all)")
+    ap.add_argument("--bg-radius", type=int, default=S, metavar="N", dest="bg_radius",
+                    help="Background subtraction radius (default: 10)")
+    ap.add_argument("--use-scrub", action="store_true", default=S, dest="use_scrub",
+                    help="Align on upsampled scrub images for sub-pixel accuracy")
+    ap.add_argument("--upscale", type=int, default=S, metavar="N",
+                    help="Scrub upscaling factor when --use-scrub (default: 4)")
     args = ap.parse_args()
 
+    # Resolution order: built-in defaults -> config file(s) -> explicit CLI flags.
+    try:
+        settings = Settings.from_toml(*args.config) if args.config else Settings()
+    except (OSError, KeyError, RuntimeError) as exc:
+        sys.exit(f"ERROR: could not load config: {exc}")
+    overrides = {_CLI_TO_FIELD[dest]: val for dest, val in vars(args).items()
+                 if dest in _CLI_TO_FIELD}
+    settings = settings.with_overrides(**overrides)
+
     if args.file is None:
-        root = _here / "test_data"
+        root = _here / settings.io.input
         candidates = sorted(root.rglob("*.tif"))
         if not candidates:
-            sys.exit("No .tif files found under test_data/")
+            sys.exit(f"No .tif files found under {root}/")
         src = candidates[0]
         print(f"No file specified — using: {src}")
     else:
@@ -128,7 +168,7 @@ def main():
 
     if not src.exists():
         sys.exit(f"File not found: {src}")
-    profile(src, args.frames)
+    profile(src, settings)
 
 
 if __name__ == "__main__":

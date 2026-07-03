@@ -31,6 +31,8 @@ to each filename, plus a `run_log.txt` summarising the batch. Use
 
 - Python 3.9+ (developed and tested on 3.11)
 - `numpy`, `scipy`, `scikit-image`, `tifffile` (installed automatically)
+- `tomli` — installed automatically only on Python 3.9/3.10, to read TOML config
+  files (Python 3.11+ uses the standard-library `tomllib` instead)
 - Optional: `matplotlib` for the diagnostic script, `pytest` for the test suite
   (`pip install -e "optomerge/[dev]"`), `opencv-python` for a faster warp/blur
   backend (`pip install -e "optomerge/[cv2]"`)
@@ -113,6 +115,22 @@ python run_optomerge.py --reuse-alignment first   # reuse one movie's alignment 
 python run_optomerge.py --dry-run                 # list files, do nothing
 ```
 
+### Configuration & run provenance
+
+Run parameters resolve in three layers, each overriding the previous: built-in
+defaults → `--config` TOML file(s) → explicit CLI flags. See
+`optomerge.example.toml` for the full annotated schema (`optomerge.config.Settings`).
+
+```bash
+python run_optomerge.py --config my_run.toml --channel-order auto   # file + CLI override
+```
+
+Every run writes its fully-resolved configuration to `<output>/run_config.toml`,
+so any result is reproducible by feeding that file straight back in:
+`python run_optomerge.py --config output_temp/run_config.toml`. TOML config works
+on Python 3.9+ — 3.11+ uses the standard-library `tomllib`, and on 3.9/3.10 the
+`tomli` backport is installed automatically.
+
 ## Repo map
 
 - `optomerge/` — the installable package
@@ -133,10 +151,8 @@ the earlier procedural package and its OOP proposal have been consolidated into
 it. The full test suite passes, including an end-to-end pipeline test on the
 sample movies.
 
-Not yet ported from the older procedural pipeline: TOML config files, GPU
-acceleration, file-level parallelism, and the multi-chunk "robust" alignment
-mode. Registration currently supports one reference plus one moving channel via
-phase correlation; the layout/aligner/reader/writer seams are designed to make
-additional channel arrangements, alignment strategies, and file formats
-drop-in extensions.
-```
+Registration currently supports one reference plus one moving channel via phase
+correlation; the layout/aligner/reader/writer seams are designed to make
+additional channel arrangements, alignment strategies, and file formats drop-in
+extensions. Not yet ported from the older procedural pipeline: GPU acceleration,
+file-level parallelism, and the multi-chunk "robust" alignment mode.
