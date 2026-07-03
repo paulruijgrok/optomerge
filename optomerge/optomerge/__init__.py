@@ -37,6 +37,7 @@ from .transform import Transform
 from .registration import Aligner, PhaseCorrelationAligner
 from .io_backends import MovieReader, MovieWriter, TiffReader, TiffWriter
 from .pipeline import MergePipeline
+from .acceptance import AcceptanceCriteria, AcceptanceResult, evaluate as evaluate_acceptance
 from .config import Settings
 
 __all__ = [
@@ -48,5 +49,6 @@ __all__ = [
     "Aligner", "PhaseCorrelationAligner",
     "MovieReader", "MovieWriter", "TiffReader", "TiffWriter",
     "MergePipeline",
+    "AcceptanceCriteria", "AcceptanceResult", "evaluate_acceptance",
     "Settings",
 ]

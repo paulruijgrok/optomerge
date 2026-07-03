@@ -63,6 +63,26 @@ class ProcessingSettings:
 
 
 @dataclass
+class AcceptanceSettings:
+    #: Minimum reference-channel row extent as a fraction of image height,
+    #: times the number of channels (stacked channels each span ~1/N).
+    min_size_row_frac: float = 0.7
+    #: Minimum reference-channel column extent as a fraction of image width.
+    min_size_col_frac: float = 0.85
+    #: Maximum allowed |t1|/|t2| translation between channels (pixels).
+    max_translation_px: float = 25.0
+    #: Maximum allowed |rotation| between channels (degrees).
+    max_rotation_deg: float = 2.0
+    #: Maximum allowed scale deviation |s - 1| * 100 (percent).
+    max_scale_pct: float = 2.0
+    #: Scoring weights (channel size vs cross-correlation peak).
+    size_weight: float = 1.0
+    cross_corr_weight: float = 3.0
+    #: Normalisation for the cross-correlation peak.
+    cross_corr_norm: float = 0.1
+
+
+@dataclass
 class RuntimeSettings:
     #: Reuse channel layout + alignment transform across the batch:
     #: "none" (independent per movie), "first" (first movie is the reference),
@@ -78,6 +98,7 @@ _SECTIONS = {
     "io": IOSettings,
     "channels": ChannelSettings,
     "alignment": AlignmentSettings,
+    "acceptance": AcceptanceSettings,
     "processing": ProcessingSettings,
     "runtime": RuntimeSettings,
 }
@@ -88,6 +109,7 @@ class Settings:
     io: IOSettings = field(default_factory=IOSettings)
     channels: ChannelSettings = field(default_factory=ChannelSettings)
     alignment: AlignmentSettings = field(default_factory=AlignmentSettings)
+    acceptance: AcceptanceSettings = field(default_factory=AcceptanceSettings)
     processing: ProcessingSettings = field(default_factory=ProcessingSettings)
     runtime: RuntimeSettings = field(default_factory=RuntimeSettings)
 
@@ -179,6 +201,20 @@ class Settings:
         return PhaseCorrelationAligner(
             init_rot=a.init_rot, init_s1=a.init_s1, init_s2=a.init_s2,
             use_scrub=a.use_scrub, upscale=a.upscale,
+        )
+
+    def build_acceptance(self):
+        """Construct the :class:`AcceptanceCriteria` this config describes."""
+        from .acceptance import AcceptanceCriteria
+        a = self.acceptance
+        return AcceptanceCriteria(
+            min_size_frac=(a.min_size_row_frac, a.min_size_col_frac),
+            max_translation_px=a.max_translation_px,
+            max_rotation_deg=a.max_rotation_deg,
+            max_scale_pct=a.max_scale_pct,
+            weight_channel_size=a.size_weight,
+            weight_cross_corr=a.cross_corr_weight,
+            cross_corr_norm=a.cross_corr_norm,
         )
 
     def to_pipeline_kwargs(self) -> Dict[str, Any]:

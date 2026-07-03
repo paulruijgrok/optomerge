@@ -27,6 +27,17 @@ init_rot = 0.0                         # initial guess: rotation (radians)
 init_s1 = 1.0                          # initial guess: scale (axis 1)
 init_s2 = 1.0                          # initial guess: scale (axis 2)
 
+[acceptance]
+# Reject nonsensical channel detections / alignments (ported from alignRGB.m).
+min_size_row_frac = 0.7                # min reference-channel height / image height * n_channels
+min_size_col_frac = 0.85               # min reference-channel width / image width
+max_translation_px = 25.0              # max |t1|/|t2| between channels (pixels)
+max_rotation_deg = 2.0                 # max |rotation| between channels (degrees)
+max_scale_pct = 2.0                    # max scale deviation |s - 1| * 100 (percent)
+size_weight = 1.0                      # scoring weight: channel size
+cross_corr_weight = 3.0                # scoring weight: cross-correlation peak
+cross_corr_norm = 0.1                  # normalisation for the cross-correlation peak
+
 [processing]
 bg_radius = 10                         # background-subtraction structuring-element radius
 bunch_size = 100000                    # frames per processing block (FrameBunch granularity)
