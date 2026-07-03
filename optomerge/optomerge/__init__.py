@@ -1,53 +1,50 @@
 """
 optomerge
 =========
-Crop and register multichannel sub-images from raw fluorescence movie stacks.
+Excise and register multichannel sub-images from raw fluorescence movie stacks.
 
-Algorithmic equivalent of the MATLAB ``align`` toolbox (Ruijgrok / Nakamura).
+Object-oriented public API. The domain objects below are a typed shell over the
+validated numerical routines in :mod:`optomerge._kernels`; the class boundaries
+keep the package extensible toward three goals:
 
-Public API
-----------
-Classes
-~~~~~~~
-    AlignmentPipeline   – high-level pipeline: load → find channels →
-                          calculate alignment → apply to all frames → save
-    SharedAlignment     – holds channel bounds + alignment transform for
-                          reuse across a batch of movies
-    OptomergeConfig     – Pydantic root config; load from TOML or use defaults
+  * faster   -> swap eager numpy for lazy/chunked/GPU backends behind one API
+  * robust   -> validation lives on the objects that own the data
+  * general  -> readers, channel layouts, aligners and writers are pluggable
 
-Functions
-~~~~~~~~~
-    find_channel_bounds   – locate imaging-channel boundaries in a projection
-    calculate_alignment   – FFT phase-correlation + scale/rotation search
-    transform_image       – apply affine transform (rot, sx, sy, tx, ty)
-    zero_pad_images       – zero-pad two images to next-power-of-2 size
-    norm_image            – linear intensity normalisation to [0, 1]
-    subtract_background   – morphological-opening background subtraction
-    crop_channel          – crop to bounds and scrub outside pixels
-    load_frames           – read a frame range from a TIFF movie
-    save_tiff             – write a numpy array as a multi-page TIFF
+Core domain objects
+-------------------
+  Movie       -- abstract base: an ordered stack of frames + pixel metadata
+  RawMovie    -- a Movie straight off disk; channels are spatially packed
+  RGBMovie    -- a Movie whose frames are merged, aligned, false-coloured output
+  Frame       -- a single 2-D image within a movie (+ its index/time)
+  FrameBunch  -- a contiguous block of frames processed together
+  Channel     -- one cropped sub-region of a raw frame (one molecular species)
+  ScrubImage  -- an enlarged/upsampled channel used to drive sub-pixel alignment
 
+Supporting abstractions (the seams that make extension cheap)
+-------------------------------------------------------------
+  MovieReader / MovieWriter -- I/O backends (TIFF, ND2, HDF5, OME-Zarr, ...)
+  ChannelLayout             -- how channels are packed into a raw frame
+  Aligner                   -- registration strategy (phase-corr, ECC, feature)
+  Transform                 -- a fitted geometric mapping between channels
 """
 
-from .pipeline import AlignmentPipeline, SharedAlignment
-from .config import OptomergeConfig
-from .segmentation import find_channel_bounds
-from .registration import calculate_alignment
-from .transform import transform_image, zero_pad_images
-from .processing import norm_image, subtract_background, crop_channel
-from .io import load_frames, save_tiff
+from .movie import Movie, RawMovie, RGBMovie
+from .frame import Frame, FrameBunch
+from .channel import Channel, ScrubImage
+from .layout import ChannelLayout, ChannelSpec
+from .transform import Transform
+from .registration import Aligner, PhaseCorrelationAligner
+from .io_backends import MovieReader, MovieWriter, TiffReader, TiffWriter
+from .pipeline import MergePipeline
 
 __all__ = [
-    "AlignmentPipeline",
-    "SharedAlignment",
-    "OptomergeConfig",
-    "find_channel_bounds",
-    "calculate_alignment",
-    "transform_image",
-    "zero_pad_images",
-    "norm_image",
-    "subtract_background",
-    "crop_channel",
-    "load_frames",
-    "save_tiff",
+    "Movie", "RawMovie", "RGBMovie",
+    "Frame", "FrameBunch",
+    "Channel", "ScrubImage",
+    "ChannelLayout", "ChannelSpec",
+    "Transform",
+    "Aligner", "PhaseCorrelationAligner",
+    "MovieReader", "MovieWriter", "TiffReader", "TiffWriter",
+    "MergePipeline",
 ]
