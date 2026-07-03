@@ -114,9 +114,30 @@ class MergePipeline:
         output: Optional[str | Path] = None,
         blue_led_frames: Optional[np.ndarray] = None,
     ) -> RGBMovie:
-        """Execute the full merge and (optionally) write the result."""
+        """Open the movie, calibrate, and merge (optionally writing the result).
+
+        Convenience wrapper over :meth:`calibrate` + :meth:`merge`. Callers that
+        need to inspect or gate on the calibration (e.g. reject a movie whose
+        alignment failed acceptance) before the expensive merge should call the
+        two stages separately.
+        """
         movie = RawMovie.open(self.source)
         self.calibrate(movie)
+        return self.merge(movie, output=output, blue_led_frames=blue_led_frames)
+
+    def merge(
+        self,
+        movie: RawMovie,
+        output: Optional[str | Path] = None,
+        blue_led_frames: Optional[np.ndarray] = None,
+    ) -> RGBMovie:
+        """Assemble the aligned RGB movie using the current calibration.
+
+        Requires :meth:`calibrate` (or a reused calibration) to have populated
+        ``resolved_layout`` / ``transforms`` / ``_limits`` first.
+        """
+        if self.resolved_layout is None:
+            raise RuntimeError("merge() called before calibrate(); no layout resolved.")
 
         if blue_led_frames is not None:
             blue_led_frames = np.asarray(blue_led_frames, dtype=bool)

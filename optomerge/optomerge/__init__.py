@@ -41,6 +41,7 @@ from .calibration import (
     AlignmentNotFoundError,
     Calibration,
     Calibrator,
+    ConservedCalibrator,
     RobustCalibrator,
     SingleProjectionCalibrator,
 )
@@ -58,7 +59,7 @@ __all__ = [
     "MovieReader", "MovieWriter", "TiffReader", "TiffWriter",
     "AcceptanceCriteria", "AcceptanceResult", "evaluate_acceptance",
     "Calibration", "Calibrator", "SingleProjectionCalibrator", "RobustCalibrator",
-    "AlignmentNotFoundError",
+    "ConservedCalibrator", "AlignmentNotFoundError",
     "group_movies", "grouping_modes",
     "MergePipeline",
     "Settings",

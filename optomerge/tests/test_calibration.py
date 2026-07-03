@@ -12,6 +12,8 @@ import pytest
 from optomerge import (
     AcceptanceCriteria,
     AlignmentNotFoundError,
+    Calibration,
+    ConservedCalibrator,
     RawMovie,
     RobustCalibrator,
     SingleProjectionCalibrator,
@@ -35,14 +37,17 @@ class _Spec:
 
 
 class _Chan:
-    def __init__(self, name, reference):
+    def __init__(self, name, reference, value=1.0):
         self.name = name
         self.reference = reference
+        self.value = value
         self.vmin = None
         self.vmax = None
 
     def calibrate(self):
-        self.vmin, self.vmax = 0.0, 1.0
+        # Limits derive from the movie data, so conserved reuse can be shown to
+        # recompute them per movie.
+        self.vmin, self.vmax = 0.0, self.value
         return self
 
 
@@ -56,7 +61,8 @@ class _Resolved:
         return [s for s in self.specs if not s.reference]
 
     def split(self, image):
-        return [_Chan(s.name, s.reference) for s in self.specs]
+        value = float(np.asarray(image).mean())
+        return [_Chan(s.name, s.reference, value) for s in self.specs]
 
 
 class _Layout:
@@ -167,3 +173,36 @@ def test_robust_falls_back_to_single_for_short_movie():
     ).calibrate(_movie(100))
     assert cal.accepted
     assert aligner.i == 1  # only one projection was aligned
+
+
+# --------------------------------------------------------------------------- #
+# ConservedCalibrator
+# --------------------------------------------------------------------------- #
+
+def _reference_calibration():
+    return Calibration(
+        resolved_layout=_Resolved(_good_specs()),
+        transforms={"red": Transform(t1=3.0, t2=1.0, rot=0.0, s1=1.0, s2=1.0, score=0.5)},
+        limits={"green": (0.0, 1.0), "red": (0.0, 1.0)},
+        score=0.7,
+    )
+
+
+def test_conserved_reuses_transforms_and_score():
+    ref = _reference_calibration()
+    cal = ConservedCalibrator(ref).calibrate(_movie(50))
+    assert cal.resolved_layout is ref.resolved_layout
+    assert cal.transforms["red"].t1 == 3.0 and cal.transforms["red"].score == 0.5
+    assert cal.score == ref.score
+    assert cal.accepted
+
+
+def test_conserved_recomputes_limits_per_movie():
+    ref = _reference_calibration()
+    cc = ConservedCalibrator(ref)
+    dim = np.full((IMG, IMG, 10), 0.2)
+    bright = np.full((IMG, IMG, 10), 0.8)
+    lim_dim = cc.calibrate(RawMovie(data=dim)).limits["green"][1]
+    lim_bright = cc.calibrate(RawMovie(data=bright)).limits["green"][1]
+    assert lim_dim != lim_bright        # limits recomputed from each movie
+    assert lim_dim == pytest.approx(0.2) and lim_bright == pytest.approx(0.8)

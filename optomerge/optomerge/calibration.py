@@ -134,6 +134,35 @@ class SingleProjectionCalibrator(Calibrator):
                                   self.criteria, gate=self.criteria is not None)
 
 
+class ConservedCalibrator(Calibrator):
+    """Reuse a reference :class:`Calibration` across movies in a set.
+
+    Applies the reference layout + transforms verbatim but recomputes the
+    intensity limits from *this* movie's projection, so each movie is normalised
+    to its own range while sharing the (virtually identical) alignment. This is
+    the OO home of ``alignRGB.m``'s ``keepAlignment`` behaviour.
+    """
+
+    def __init__(self, reference: Calibration, projection_frames: Optional[int] = None) -> None:
+        self.reference = reference
+        self.projection_frames = projection_frames
+
+    def calibrate(self, movie: "RawMovie") -> Calibration:
+        layout = self.reference.resolved_layout
+        mean_proj = movie.mean_projection(self.projection_frames)
+        proj_channels = {c.name: c.calibrate() for c in layout.split(mean_proj)}
+        limits = {name: (c.vmin, c.vmax) for name, c in proj_channels.items()}
+        return Calibration(
+            resolved_layout=layout,
+            transforms=dict(self.reference.transforms),
+            limits=limits,
+            score=self.reference.score,
+            accepted=True,
+            reasons=[],
+            image_shape=tuple(mean_proj.shape),
+        )
+
+
 class RobustCalibrator(Calibrator):
     """Best-of-N calibrator: chunk the movie, score each, pick the best.
 
