@@ -113,8 +113,24 @@ def find_channel_bounds(
 
     H, W = primary.shape
 
+    # ---- Manual bounds: convert directly, no segmentation needed ----
+    if channel_bounds is not None:
+        cb = np.atleast_2d(np.asarray(channel_bounds))
+        if cb.shape[0] == 1:
+            b1, s1 = _convert_manual_bounds(cb[0], W, H)
+            return b1, s1, None, None
+        b_top, s_top = _convert_manual_bounds(cb[0], W, H)
+        b_bot, s_bot = _convert_manual_bounds(cb[1], W, H)
+        if channel_order == "top_red_heads_bottom_green_fils":
+            is_green_top = False
+        elif channel_order == "top_green_fils_bottom_red_heads":
+            is_green_top = True
+        else:  # auto: brighter half is green
+            is_green_top = mean_image[: H // 2, :].mean() >= mean_image[H // 2 :, :].mean()
+        return (b_top, s_top, b_bot, s_bot) if is_green_top else (b_bot, s_bot, b_top, s_top)
+
     # ---- Row-profile method (default): robust axis-aligned rectangular bounds ----
-    if channel_bounds is None and segmentation_method in ("row_profile", "profile"):
+    if segmentation_method in ("row_profile", "profile"):
         return _find_bounds_row_profile(primary, mean_image, channel_order,
                                         pixel_ratio=pixel_ratio, verbose=verbose)
 
@@ -161,41 +177,34 @@ def find_channel_bounds(
 
     bounds_im = boundary_pixels_im
 
-    # ---- Find bounds ----
+    # ---- Find bounds (line-search) ----
     if num_channels == 1:
-        if channel_bounds is not None:
-            bounds1, scrub1 = _convert_manual_bounds(channel_bounds[0], W, H)
-        else:
-            bounds1, scrub1, _, _ = _get_channel_bounds(
-                bounds_im, 0, H - 1, 0, W - 1, False, np.array([0, 0])
-            )
+        bounds1, scrub1, _, _ = _get_channel_bounds(
+            bounds_im, 0, H - 1, 0, W - 1, False, np.array([0, 0])
+        )
         return bounds1, scrub1, None, None
 
     else:  # two channels
-        if channel_bounds is not None:
-            b_top, s_top = _convert_manual_bounds(channel_bounds[0], W, H)
-            b_bot, s_bot = _convert_manual_bounds(channel_bounds[1], W, H)
-        else:
-            if verbose:
-                print("--Searching for channel boundaries...")
+        if verbose:
+            print("--Searching for channel boundaries...")
 
-            b_top, s_top, close_chans, old_bot = _get_channel_bounds(
-                bounds_im, 0, H // 2 - 1, 0, W - 1, False, np.array([0, 0])
+        b_top, s_top, close_chans, old_bot = _get_channel_bounds(
+            bounds_im, 0, H // 2 - 1, 0, W - 1, False, np.array([0, 0])
+        )
+        if not close_chans:
+            b_bot, s_bot, _, _ = _get_channel_bounds(
+                bounds_im, H // 2, H - 1, 0, W - 1, False, old_bot
             )
-            if not close_chans:
-                b_bot, s_bot, _, _ = _get_channel_bounds(
-                    bounds_im, H // 2, H - 1, 0, W - 1, False, old_bot
-                )
-            else:
-                # Fallback: split image evenly
-                b_bot = np.array([[H // 2, H - 1], [0, W - 1]])
-                s_bot = _gen_scrub_image(
-                    np.array([H // 2, H // 2]),
-                    np.array([H - 1, H - 1]),
-                    np.array([0, 0]),
-                    np.array([W - 1, W - 1]),
-                    W, H,
-                )
+        else:
+            # Fallback: split image evenly
+            b_bot = np.array([[H // 2, H - 1], [0, W - 1]])
+            s_bot = _gen_scrub_image(
+                np.array([H // 2, H // 2]),
+                np.array([H - 1, H - 1]),
+                np.array([0, 0]),
+                np.array([W - 1, W - 1]),
+                W, H,
+            )
 
         # Assign green = brighter, red = dimmer
         if is_green_top:

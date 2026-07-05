@@ -101,3 +101,19 @@ def test_column_trim_narrow_channel():
     im = _two_band_image(cols=(60, 160))
     b1, _, _, _ = find_channel_bounds(im, mean_projection=im)
     assert 58 <= b1[1, 0] <= 62 and 156 <= b1[1, 1] <= 161
+
+
+def test_manual_bounds_bypass_segmentation():
+    # Manual bounds must not run segmentation (which would crash under the
+    # row_profile default): they are converted directly.
+    im = np.zeros((100, 100))
+    im[10:80, 5:95] = 1.0
+    b1, s1, b2, s2 = find_channel_bounds(
+        im, mean_projection=im, channel_bounds=np.array([[5, 10, 95, 80]]))
+    assert b2 is None and b1[0, 0] == 10 and b1[0, 1] == 80
+
+    cb2 = np.array([[5, 10, 95, 45], [5, 55, 95, 90]])
+    b1, s1, b2, s2 = find_channel_bounds(
+        im, mean_projection=im, channel_bounds=cb2,
+        channel_order="top_green_fils_bottom_red_heads")
+    assert b1[0, 0] == 10 and b2[0, 0] == 55   # green top, red bottom
