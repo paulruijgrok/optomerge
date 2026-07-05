@@ -183,16 +183,19 @@ sample movies.
 Registration currently supports one reference plus one moving channel via phase
 correlation, with acceptance criteria, a robust best-of-N calibrator, a
 constrained peak search, and conserve-alignment across movie sets (see above).
-The layout/aligner/reader/writer/calibrator seams are designed to make
-additional channel arrangements, alignment strategies, and file formats drop-in
-extensions.
+Channels are segmented by default with a robust row-intensity-profile method
+that finds tight axis-aligned rectangles (`--segmentation row_profile`; the
+legacy k-means/slanted-line search is `line_search`). The layout / aligner /
+reader / writer / calibrator / segmentation seams are designed to make
+additional channel arrangements, methods, and file formats drop-in extensions.
 
 Known limitations / future work:
 
 - **`--channel-order auto` is unreliable** — it often fails to split the two
   stacked channels; forcing an explicit order is recommended for now.
-- **Channel-segmentation crop bounds** (`find_channel_bounds`) can be imprecise;
-  improving segmentation quality is the main open area.
+- **Output normalisation** uses each channel's projection min/max, which can
+  make bright frames look over-saturated; robust (percentile) normalisation is
+  the next planned improvement.
 - Not yet ported from the procedural pipeline: GPU acceleration and file-level
   parallelism. Predetermined alignment can be taken from a reference movie
   (`--reuse-alignment FILE`); saving/loading a fitted alignment to a sidecar

@@ -134,9 +134,10 @@ def find_channel_bounds(
         return _find_bounds_row_profile(primary, mean_image, channel_order,
                                         pixel_ratio=pixel_ratio, verbose=verbose)
 
-    # ---- Segmentation images (k-means / line-search path) ----
+    # ---- Legacy line-search path (k-means/otsu segmentation image) ----
+    seg_img_method = "otsu" if segmentation_method == "otsu" else "quick_kmeans"
     channel_pixels_im, boundary_pixels_im = _gen_boundary_segmentation_image(
-        mean_image, segmentation_method, num_clusters, cluster_level
+        mean_image, seg_img_method, num_clusters, cluster_level
     )
 
     # ---- Determine number of channels and order ----

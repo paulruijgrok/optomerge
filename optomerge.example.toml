@@ -18,6 +18,7 @@ overwrite = false                      # re-process files whose output already e
 
 [channels]
 channel_order = "auto"                 # auto | top_green_fils_bottom_red_heads | top_red_heads_bottom_green_fils
+segmentation = "row_profile"           # row_profile (robust rectangles) | line_search (legacy k-means)
 # projection_frames = 200              # frames used for detection/alignment (unset = all frames)
 
 [alignment]

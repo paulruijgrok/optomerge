@@ -40,6 +40,9 @@ class ChannelSettings:
     channel_order: str = "auto"
     #: Number of frames used for the detection/alignment projection (None = all).
     projection_frames: Optional[int] = None
+    #: Channel-finding method: "row_profile" (default, robust rectangles) or
+    #: "line_search" (legacy k-means + slanted-line search).
+    segmentation: str = "row_profile"
 
 
 @dataclass
@@ -223,7 +226,8 @@ class Settings:
         """Construct the :class:`ChannelLayout` this config describes."""
         from .layout import ChannelLayout
         order = self.channels.channel_order
-        return ChannelLayout(name=order, channel_order=order)
+        return ChannelLayout(name=order, channel_order=order,
+                             segmentation_method=self.channels.segmentation)
 
     def build_aligner(self):
         """Construct the :class:`Aligner` this config describes."""
