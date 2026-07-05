@@ -124,6 +124,7 @@ _CLI_TO_FIELD = {
     "channel_order": "channel_order", "frames": "projection_frames",
     "segmentation": "segmentation",
     "bg_radius": "bg_radius", "bunch_size": "bunch_size",
+    "norm_projection": "norm_projection",
     "use_scrub": "use_scrub", "upscale": "upscale", "max_shift": "max_shift",
     "calibration_mode": "mode",
     "group_by": "by", "group_token": "token_pattern",
@@ -286,6 +287,9 @@ def main() -> None:
     parser.add_argument("--segmentation", default=S, choices=["row_profile", "line_search"],
                         metavar="STR", help="channel-finding method (default: row_profile)")
     parser.add_argument("--bg-radius", type=int, default=S, metavar="N", dest="bg_radius")
+    parser.add_argument("--norm-projection", default=S, choices=["max", "mean"],
+                        dest="norm_projection", metavar="STR",
+                        help="projection for normalisation limits (default: max)")
     parser.add_argument("--bunch-size", type=int, default=S, metavar="N", dest="bunch_size")
     parser.add_argument("--use-scrub", action="store_true", default=S, dest="use_scrub")
     parser.add_argument("--upscale", type=int, default=S, metavar="N")
