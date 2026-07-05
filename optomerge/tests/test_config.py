@@ -59,6 +59,12 @@ def test_build_layout_and_aligner_reflect_config():
     assert aligner.use_scrub is True and aligner.upscale == 8
 
 
+def test_segmentation_method_flows_to_layout():
+    assert Settings().build_layout().segmentation_method == "row_profile"   # default
+    s = Settings.from_sources({"channels": {"segmentation": "line_search"}})
+    assert s.build_layout().segmentation_method == "line_search"
+
+
 def test_unknown_section_and_key_raise():
     for bad in ({"bogus": {}}, {"processing": {"nope": 1}}):
         with pytest.raises(KeyError):

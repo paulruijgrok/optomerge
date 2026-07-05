@@ -122,6 +122,7 @@ _CHANNEL_ORDERS = (
 _CLI_TO_FIELD = {
     "input": "input", "output": "output", "suffix": "suffix", "overwrite": "overwrite",
     "channel_order": "channel_order", "frames": "projection_frames",
+    "segmentation": "segmentation",
     "bg_radius": "bg_radius", "bunch_size": "bunch_size",
     "use_scrub": "use_scrub", "upscale": "upscale", "max_shift": "max_shift",
     "calibration_mode": "mode",
@@ -279,6 +280,8 @@ def main() -> None:
                         dest="channel_order", metavar="STR")
     parser.add_argument("--frames", type=int, default=S, metavar="N",
                         help="Max frames for the detection projection")
+    parser.add_argument("--segmentation", default=S, choices=["row_profile", "line_search"],
+                        metavar="STR", help="channel-finding method (default: row_profile)")
     parser.add_argument("--bg-radius", type=int, default=S, metavar="N", dest="bg_radius")
     parser.add_argument("--bunch-size", type=int, default=S, metavar="N", dest="bunch_size")
     parser.add_argument("--use-scrub", action="store_true", default=S, dest="use_scrub")

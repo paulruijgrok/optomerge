@@ -76,12 +76,17 @@ class ChannelLayout:
     manual_bounds : np.ndarray, optional
         Manual bounds ``[x_left, y_top, x_right, y_bottom]`` per channel; when
         given the line-search is skipped.
+    segmentation_method : str
+        Channel-finding algorithm: ``"row_profile"`` (default, robust
+        axis-aligned rectangles) or ``"line_search"`` (legacy k-means +
+        slanted-line search).
     """
 
     specs: List[ChannelSpec] = field(default_factory=list)
     name: str = "auto"
     channel_order: str = "auto"
     manual_bounds: Optional[np.ndarray] = None
+    segmentation_method: str = "row_profile"
 
     # -- queries ----------------------------------------------------------- #
 
@@ -124,6 +129,7 @@ class ChannelLayout:
             mean_projection=mean_projection,
             channel_order=self.channel_order,
             channel_bounds=self.manual_bounds,
+            segmentation_method=self.segmentation_method,
             verbose=verbose,
         )
 
@@ -136,6 +142,7 @@ class ChannelLayout:
             name=self.name,
             channel_order=self.channel_order,
             manual_bounds=self.manual_bounds,
+            segmentation_method=self.segmentation_method,
         )
 
     # -- splitting --------------------------------------------------------- #

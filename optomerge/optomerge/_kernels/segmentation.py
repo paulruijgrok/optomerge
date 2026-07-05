@@ -48,7 +48,7 @@ def find_channel_bounds(
     mean_projection: Optional[np.ndarray] = None,
     channel_order: ChannelOrder = "auto",
     channel_bounds: Optional[np.ndarray] = None,
-    segmentation_method: str = "quick_kmeans",
+    segmentation_method: str = "row_profile",
     num_clusters: int = 10,
     cluster_level: int = 4,
     pixel_ratio: float = 3.0,
@@ -113,9 +113,31 @@ def find_channel_bounds(
 
     H, W = primary.shape
 
-    # ---- Segmentation images ----
+    # ---- Manual bounds: convert directly, no segmentation needed ----
+    if channel_bounds is not None:
+        cb = np.atleast_2d(np.asarray(channel_bounds))
+        if cb.shape[0] == 1:
+            b1, s1 = _convert_manual_bounds(cb[0], W, H)
+            return b1, s1, None, None
+        b_top, s_top = _convert_manual_bounds(cb[0], W, H)
+        b_bot, s_bot = _convert_manual_bounds(cb[1], W, H)
+        if channel_order == "top_red_heads_bottom_green_fils":
+            is_green_top = False
+        elif channel_order == "top_green_fils_bottom_red_heads":
+            is_green_top = True
+        else:  # auto: brighter half is green
+            is_green_top = mean_image[: H // 2, :].mean() >= mean_image[H // 2 :, :].mean()
+        return (b_top, s_top, b_bot, s_bot) if is_green_top else (b_bot, s_bot, b_top, s_top)
+
+    # ---- Row-profile method (default): robust axis-aligned rectangular bounds ----
+    if segmentation_method in ("row_profile", "profile"):
+        return _find_bounds_row_profile(primary, mean_image, channel_order,
+                                        pixel_ratio=pixel_ratio, verbose=verbose)
+
+    # ---- Legacy line-search path (k-means/otsu segmentation image) ----
+    seg_img_method = "otsu" if segmentation_method == "otsu" else "quick_kmeans"
     channel_pixels_im, boundary_pixels_im = _gen_boundary_segmentation_image(
-        mean_image, segmentation_method, num_clusters, cluster_level
+        mean_image, seg_img_method, num_clusters, cluster_level
     )
 
     # ---- Determine number of channels and order ----
@@ -156,41 +178,34 @@ def find_channel_bounds(
 
     bounds_im = boundary_pixels_im
 
-    # ---- Find bounds ----
+    # ---- Find bounds (line-search) ----
     if num_channels == 1:
-        if channel_bounds is not None:
-            bounds1, scrub1 = _convert_manual_bounds(channel_bounds[0], W, H)
-        else:
-            bounds1, scrub1, _, _ = _get_channel_bounds(
-                bounds_im, 0, H - 1, 0, W - 1, False, np.array([0, 0])
-            )
+        bounds1, scrub1, _, _ = _get_channel_bounds(
+            bounds_im, 0, H - 1, 0, W - 1, False, np.array([0, 0])
+        )
         return bounds1, scrub1, None, None
 
     else:  # two channels
-        if channel_bounds is not None:
-            b_top, s_top = _convert_manual_bounds(channel_bounds[0], W, H)
-            b_bot, s_bot = _convert_manual_bounds(channel_bounds[1], W, H)
-        else:
-            if verbose:
-                print("--Searching for channel boundaries...")
+        if verbose:
+            print("--Searching for channel boundaries...")
 
-            b_top, s_top, close_chans, old_bot = _get_channel_bounds(
-                bounds_im, 0, H // 2 - 1, 0, W - 1, False, np.array([0, 0])
+        b_top, s_top, close_chans, old_bot = _get_channel_bounds(
+            bounds_im, 0, H // 2 - 1, 0, W - 1, False, np.array([0, 0])
+        )
+        if not close_chans:
+            b_bot, s_bot, _, _ = _get_channel_bounds(
+                bounds_im, H // 2, H - 1, 0, W - 1, False, old_bot
             )
-            if not close_chans:
-                b_bot, s_bot, _, _ = _get_channel_bounds(
-                    bounds_im, H // 2, H - 1, 0, W - 1, False, old_bot
-                )
-            else:
-                # Fallback: split image evenly
-                b_bot = np.array([[H // 2, H - 1], [0, W - 1]])
-                s_bot = _gen_scrub_image(
-                    np.array([H // 2, H // 2]),
-                    np.array([H - 1, H - 1]),
-                    np.array([0, 0]),
-                    np.array([W - 1, W - 1]),
-                    W, H,
-                )
+        else:
+            # Fallback: split image evenly
+            b_bot = np.array([[H // 2, H - 1], [0, W - 1]])
+            s_bot = _gen_scrub_image(
+                np.array([H // 2, H // 2]),
+                np.array([H - 1, H - 1]),
+                np.array([0, 0]),
+                np.array([W - 1, W - 1]),
+                W, H,
+            )
 
         # Assign green = brighter, red = dimmer
         if is_green_top:
@@ -201,6 +216,125 @@ def find_channel_bounds(
             bounds2, scrub2 = b_top, s_top
 
         return bounds1, scrub1, bounds2, scrub2
+
+
+# ---------------------------------------------------------------------------
+# Row-profile segmentation (default)
+# ---------------------------------------------------------------------------
+#
+# For OptoSplit-style hardware the channels are two horizontal bands separated by
+# a dark gap. Rather than a fragile slanted-line search on a noisy k-means mask,
+# we read the geometry directly off the *intensity profiles*: a per-row profile
+# locates the gap between the two bands and each band's tight top/bottom extent;
+# a per-column profile trims the left/right extent. The result is an axis-aligned
+# rectangle per channel — scale-invariant (fractional thresholds, no magic
+# constants) and robust to uneven brightness/saturation that defeats k-means.
+
+
+def _smooth1d(x: np.ndarray, window: int) -> np.ndarray:
+    """Moving-average smooth (odd window; edges handled by reflection)."""
+    if window <= 1:
+        return x.astype(np.float64)
+    window = int(window) | 1  # force odd
+    pad = window // 2
+    xp = np.pad(x.astype(np.float64), pad, mode="reflect")
+    kernel = np.ones(window) / window
+    return np.convolve(xp, kernel, mode="valid")
+
+
+def _band_extent(profile: np.ndarray, lo: int, hi: int, trim_frac: float) -> Tuple[int, int]:
+    """Tight [start, end] (inclusive) within ``[lo, hi]`` where ``profile`` rises
+    above ``trim_frac`` of its local dynamic range (trims dark margins)."""
+    lo = max(0, int(lo))
+    hi = min(len(profile) - 1, int(hi))
+    seg = profile[lo:hi + 1]
+    if seg.size == 0:
+        return lo, hi
+    pmin, pmax = float(seg.min()), float(seg.max())
+    if pmax - pmin < 1e-12:
+        return lo, hi
+    thr = pmin + trim_frac * (pmax - pmin)
+    above = np.where(seg >= thr)[0]
+    if above.size == 0:
+        return lo, hi
+    return lo + int(above[0]), lo + int(above[-1])
+
+
+def _rect_scrub(r0: int, r1: int, c0: int, c1: int, W: int, H: int) -> np.ndarray:
+    """Boolean mask, ``True`` outside the rectangle ``[r0:r1, c0:c1]`` (inclusive)."""
+    scrub = np.ones((H, W), dtype=bool)
+    scrub[r0:r1 + 1, c0:c1 + 1] = False
+    return scrub
+
+
+def _find_split(row_prof: np.ndarray, H: int, search_frac: float = 0.4) -> Tuple[int, np.ndarray]:
+    """Row of the gap between the two channels: the deepest valley of the smoothed
+    row profile within the central ``search_frac`` of the image."""
+    smoothed = _smooth1d(row_prof, max(3, H // 50))
+    lo = max(1, int(H * (0.5 - search_frac / 2)))
+    hi = min(H - 2, int(H * (0.5 + search_frac / 2)))
+    if hi <= lo:
+        return H // 2, smoothed
+    split = lo + int(np.argmin(smoothed[lo:hi + 1]))
+    return split, smoothed
+
+
+def _find_bounds_row_profile(
+    max_proj: np.ndarray,
+    mean_proj: np.ndarray,
+    channel_order: str,
+    trim_frac: float = 0.2,
+    gap_search_frac: float = 0.4,
+    pixel_ratio: float = 3.0,
+    verbose: bool = False,
+) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
+    """Detect one or two channels from row/column intensity profiles.
+
+    Returns ``(bounds1, scrub1, bounds2, scrub2)`` in the same convention as
+    :func:`find_channel_bounds` (channel 1 = green/bright).
+    """
+    H, W = mean_proj.shape
+    row_prof = mean_proj.mean(axis=1)
+    split, smoothed = _find_split(row_prof, H, gap_search_frac)
+
+    # -- one vs two channels --
+    if channel_order in ("top_green_fils_bottom_red_heads",
+                         "top_red_heads_bottom_green_fils"):
+        num_channels = 2
+    else:  # auto: a real gap has a deep valley relative to both bands
+        top_peak = float(smoothed[:split].max()) if split > 0 else 0.0
+        bot_peak = float(smoothed[split:].max()) if split < H else 0.0
+        valley = float(smoothed[split])
+        span = max(float(smoothed.max()) - float(smoothed.min()), 1e-9)
+        two = (top_peak - valley) > 0.25 * span and (bot_peak - valley) > 0.25 * span
+        num_channels = 2 if two else 1
+        if verbose:
+            print(f"--Row-profile: {'two' if two else 'one'} channel(s) "
+                  f"(split row {split}).")
+
+    def _band(lo, hi):
+        r0, r1 = _band_extent(row_prof, lo, hi, trim_frac)
+        col_prof = mean_proj[r0:r1 + 1, :].mean(axis=0)
+        c0, c1 = _band_extent(col_prof, 0, W - 1, trim_frac)
+        return np.array([[r0, r1], [c0, c1]]), _rect_scrub(r0, r1, c0, c1, W, H)
+
+    if num_channels == 1:
+        b1, s1 = _band(0, H - 1)
+        return b1, s1, None, None
+
+    b_top, s_top = _band(0, split)
+    b_bot, s_bot = _band(split, H - 1)
+
+    if channel_order == "top_green_fils_bottom_red_heads":
+        is_green_top = True
+    elif channel_order == "top_red_heads_bottom_green_fils":
+        is_green_top = False
+    else:  # auto: the brighter half is the green channel
+        is_green_top = max_proj[:split, :].mean() >= max_proj[split:, :].mean()
+
+    if is_green_top:
+        return b_top, s_top, b_bot, s_bot
+    return b_bot, s_bot, b_top, s_top
 
 
 # ---------------------------------------------------------------------------
