@@ -132,8 +132,12 @@ def run_stages(
     sr.layout = candidate.resolve(sr.max_proj, sr.mean_proj, verbose=verbose)
 
     # ── 4. Calibrate + fit alignment transforms ───────────────────────────
+    # Normalisation limits from the max projection (matches the pipeline: avoids
+    # saturating moving filaments); alignment from the mean projection.
+    limit_channels = {c.name: c.calibrate(exclude_fraction=0.001)
+                      for c in sr.layout.split(sr.max_proj)}
+    sr.limits = {n: (c.vmin, c.vmax) for n, c in limit_channels.items()}
     proj_channels = {c.name: c.calibrate() for c in sr.layout.split(sr.mean_proj)}
-    sr.limits = {n: (c.vmin, c.vmax) for n, c in proj_channels.items()}
     reference = next(c for c in proj_channels.values() if c.reference)
     aligner = PhaseCorrelationAligner(use_scrub=use_scrub, upscale=upscale)
     for spec in sr.layout.moving_specs:
