@@ -181,6 +181,8 @@ def process_file(
     verbose: bool,
     logger: logging.Logger,
     shared: "Calibration | None" = None,
+    norm_from_max: bool = True,
+    norm_exclude: float = 0.001,
 ) -> dict:
     """Calibrate, gate on acceptance, then merge one file.
 
@@ -198,7 +200,8 @@ def process_file(
     t0 = time.perf_counter()
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)
-        active = (ConservedCalibrator(shared, projection_frames=projection_frames)
+        active = (ConservedCalibrator(shared, projection_frames=projection_frames,
+                                      norm_from_max=norm_from_max, norm_exclude=norm_exclude)
                   if shared is not None else calibrator)
         pipe = MergePipeline(source=src, calibrator=active, bunch_size=bunch_size,
                              bg_radius=bg_radius, projection_frames=projection_frames,
@@ -393,6 +396,8 @@ def main() -> None:
             bg_radius=settings.processing.bg_radius,
             projection_frames=settings.channels.projection_frames,
             verbose=settings.runtime.verbose, logger=logger,
+            norm_from_max=settings.processing.norm_projection == "max",
+            norm_exclude=settings.processing.norm_exclude,
         )
 
     results: list[dict] = []

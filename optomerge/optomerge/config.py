@@ -67,6 +67,12 @@ class ProcessingSettings:
     #: Frames held in memory / processed per block (the FrameBunch granularity).
     #: Small keeps memory bounded; ~100 mirrors the MATLAB reference.
     bunch_size: int = 100
+    #: Projection used for per-channel normalisation limits: "max" (default;
+    #: tracks per-frame peaks so moving filaments don't saturate) or "mean".
+    norm_projection: str = "max"
+    #: Percentile fraction excluded at each end when setting the limits, so a
+    #: hot pixel can't set vmax (0.001 = ignore the top/bottom 0.1%).
+    norm_exclude: float = 0.001
 
 
 @dataclass
@@ -264,16 +270,20 @@ class Settings:
         aligner = self.build_aligner()
         criteria = self.build_acceptance()
         c = self.calibration
+        norm_from_max = self.processing.norm_projection == "max"
+        norm_exclude = self.processing.norm_exclude
         if c.mode == "robust":
             return RobustCalibrator(
                 layout=layout, aligner=aligner, criteria=criteria,
                 chunk_size=c.chunk_size, min_candidates=c.min_candidates,
                 max_trials=c.max_trials, verbose=self.runtime.verbose,
+                norm_from_max=norm_from_max, norm_exclude=norm_exclude,
             )
         return SingleProjectionCalibrator(
             layout=layout, aligner=aligner,
             projection_frames=self.channels.projection_frames,
             criteria=criteria, verbose=self.runtime.verbose,
+            norm_from_max=norm_from_max, norm_exclude=norm_exclude,
         )
 
     def to_pipeline_kwargs(self) -> Dict[str, Any]:
