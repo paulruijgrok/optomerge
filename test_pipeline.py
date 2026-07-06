@@ -90,7 +90,9 @@ class StageResult:
     """Bundle of intermediate artifacts produced while stepping the pipeline."""
 
     def __init__(self) -> None:
-        self.data: Optional[np.ndarray] = None         # (H, W, N) raw
+        self.data: Optional[np.ndarray] = None         # (H, W, N) raw (merge only)
+        self.frame0: Optional[np.ndarray] = None       # first raw frame (for diagnostics)
+        self.n_frames: Optional[int] = None
         self.max_proj: Optional[np.ndarray] = None
         self.mean_proj: Optional[np.ndarray] = None
         self.layout: Optional[ChannelLayout] = None
@@ -110,14 +112,20 @@ def run_stages(
     out_dir: Path,
     stem: str,
     verbose: bool,
+    merge: bool = True,
 ) -> StageResult:
-    """Execute the pipeline stage by stage, saving a diagnostic after each."""
+    """Execute the pipeline stage by stage, saving a diagnostic after each.
+
+    With ``merge=False`` the full-movie load and the RGB merge are skipped, so
+    only the detection/alignment diagnostics are produced (fast).
+    """
     sr = StageResult()
 
     # ── 1. Load ───────────────────────────────────────────────────────────
     print("  [1/5] Loading ...")
     movie = RawMovie.open(src)
-    sr.data = movie.to_array()                       # (H, W, N)
+    sr.n_frames = movie.shape[-1]
+    sr.frame0 = movie.frame(0).data                  # one frame, for diagnostics
 
     # ── 2. Project ────────────────────────────────────────────────────────
     print("  [2/5] Projecting ...")
@@ -153,8 +161,13 @@ def run_stages(
         save_diag_channels(sr, out_dir, stem)
         save_diag_alignment(sr, out_dir, stem)
 
+    if not merge:
+        print("  [skip merge] --no-merge: detection/alignment diagnostics only")
+        return sr
+
     # ── 5. Assemble aligned RGB movie ─────────────────────────────────────
     print("  [4/5] Aligning frames ...")
+    sr.data = movie.to_array()                       # (H, W, N) — full load
     channels = sr.layout.split(sr.data)
     for ch in channels:
         ch.vmin, ch.vmax = sr.limits[ch.name]
@@ -225,7 +238,7 @@ def save_diag_segmentation(sr: StageResult, out_dir: Path, stem: str):
 
 def save_diag_channels(sr: StageResult, out_dir: Path, stem: str):
     """Diag 03 – cropped channels from frame 0."""
-    frame0 = sr.data[:, :, 0]
+    frame0 = sr.frame0
     channels = sr.layout.split(frame0)
     cmaps = {"green": "Greens_r", "red": "Reds_r"}
 
@@ -315,6 +328,7 @@ def process_file(
     upscale: int,
     save_diag: bool,
     verbose: bool,
+    merge: bool = True,
 ) -> dict:
     """Run the full pipeline on *src*, saving outputs + diagnostics to *dst_dir*."""
     result = dict(src=str(src), success=False, duration=0.0,
@@ -325,9 +339,9 @@ def process_file(
         stem = src.stem
         sr = run_stages(
             src, channel_order, projection_frames, bg_radius,
-            use_scrub, upscale, save_diag, dst_dir, stem, verbose,
+            use_scrub, upscale, save_diag, dst_dir, stem, verbose, merge=merge,
         )
-        result["n_frames"] = sr.data.shape[2]
+        result["n_frames"] = sr.n_frames
         if sr.transforms:
             t = next(iter(sr.transforms.values()))
             result["alignment"] = {
@@ -382,6 +396,8 @@ def main():
                    help="Process a single file instead of scanning --input")
     p.add_argument("--no-diag", action="store_true",
                    help="Skip saving diagnostic PNG images")
+    p.add_argument("--no-merge", action="store_true",
+                   help="Skip the full-movie RGB merge; detection/alignment diagnostics only (fast)")
     args = p.parse_args()
 
     # Resolution order: built-in defaults -> config file(s) -> explicit CLI flags.
@@ -453,6 +469,7 @@ def main():
             bg_radius=settings.processing.bg_radius,
             use_scrub=settings.alignment.use_scrub, upscale=settings.alignment.upscale,
             save_diag=not args.no_diag, verbose=settings.runtime.verbose,
+            merge=not args.no_merge,
         )
         results.append(result)
         mins, secs = divmod(int(result["duration"]), 60)
