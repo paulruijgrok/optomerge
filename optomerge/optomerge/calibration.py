@@ -53,6 +53,20 @@ class Calibration:
     image_shape: Optional[tuple] = None
 
 
+def _despeckle(image: np.ndarray, size: int = 3) -> np.ndarray:
+    """Spatial median filter to remove isolated cosmic rays / hot pixels.
+
+    Unlike a percentile clip, a 3x3 median removes lone bright pixels but keeps
+    multi-pixel features (e.g. sparse point-like "heads"), so ``vmax`` reflects
+    real signal rather than being pulled down by clipping sparse channels.
+    """
+    try:
+        from scipy.ndimage import median_filter
+        return median_filter(np.asarray(image, dtype=np.float64), size=size)
+    except Exception:  # pragma: no cover - scipy always present in practice
+        return np.asarray(image, dtype=np.float64)
+
+
 def _compute_limits(
     resolved_layout: ChannelLayout,
     limit_source: np.ndarray,
@@ -60,12 +74,13 @@ def _compute_limits(
 ) -> Dict[str, Tuple[float, float]]:
     """Per-channel (vmin, vmax) intensity limits from a projection.
 
-    Uses the max projection by default (see :func:`_build_calibration`), with a
-    percentile exclusion (``norm_exclude``) so a hot pixel / cosmic ray cannot
-    set ``vmax`` and dim the whole output.
+    The projection is median-filtered first (removes cosmic rays without
+    clipping sparse real features), then ``vmin``/``vmax`` are the min/max --
+    or, if ``norm_exclude > 0``, the corresponding percentiles.
     """
+    despeckled = _despeckle(limit_source)
     chans = {c.name: c.calibrate(exclude_fraction=norm_exclude)
-             for c in resolved_layout.split(limit_source)}
+             for c in resolved_layout.split(despeckled)}
     return {name: (c.vmin, c.vmax) for name, c in chans.items()}
 
 
@@ -77,7 +92,7 @@ def _build_calibration(
     criteria: Optional[AcceptanceCriteria],
     gate: bool,
     norm_from_max: bool = True,
-    norm_exclude: float = 0.001,
+    norm_exclude: float = 0.0,
 ) -> Calibration:
     """Fit transforms and package a :class:`Calibration`.
 
@@ -146,7 +161,7 @@ class SingleProjectionCalibrator(Calibrator):
         criteria: Optional[AcceptanceCriteria] = None,
         verbose: bool = False,
         norm_from_max: bool = True,
-        norm_exclude: float = 0.001,
+        norm_exclude: float = 0.0,
     ) -> None:
         self.layout = layout or ChannelLayout.auto()
         self.aligner = aligner or PhaseCorrelationAligner()
@@ -176,7 +191,7 @@ class ConservedCalibrator(Calibrator):
     """
 
     def __init__(self, reference: Calibration, projection_frames: Optional[int] = None,
-                 norm_from_max: bool = True, norm_exclude: float = 0.001) -> None:
+                 norm_from_max: bool = True, norm_exclude: float = 0.0) -> None:
         self.reference = reference
         self.projection_frames = projection_frames
         self.norm_from_max = norm_from_max
@@ -231,7 +246,7 @@ class RobustCalibrator(Calibrator):
         max_trials: int = 30,
         verbose: bool = False,
         norm_from_max: bool = True,
-        norm_exclude: float = 0.001,
+        norm_exclude: float = 0.0,
     ) -> None:
         self.layout = layout or ChannelLayout.auto()
         self.aligner = aligner or PhaseCorrelationAligner()

@@ -57,7 +57,7 @@ token_pattern = "_ch\\d\\d_"           # regex marker for by = "token" (channel/
 bg_radius = 10                         # background-subtraction structuring-element radius
 bunch_size = 100                       # frames held/processed per block (caps memory; ~100 like MATLAB)
 norm_projection = "max"                # projection for normalisation limits: max (avoids saturating moving filaments) | mean
-norm_exclude = 0.001                   # exclude top/bottom fraction when setting limits (hot-pixel guard)
+norm_exclude = 0.0                     # extra percentile excluded when setting limits (0 = min/max after median-despeckle)
 
 [runtime]
 reuse_alignment = "none"               # none | first | <reference file>: reuse layout+transform across the batch

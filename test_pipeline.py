@@ -142,11 +142,10 @@ def run_stages(
     sr.layout = candidate.resolve(sr.max_proj, sr.mean_proj, verbose=verbose)
 
     # ── 4. Calibrate + fit alignment transforms ───────────────────────────
-    # Normalisation limits from the max projection (matches the pipeline: avoids
-    # saturating moving filaments); alignment from the mean projection.
-    limit_channels = {c.name: c.calibrate(exclude_fraction=0.001)
-                      for c in sr.layout.split(sr.max_proj)}
-    sr.limits = {n: (c.vmin, c.vmax) for n, c in limit_channels.items()}
+    # Normalisation limits from the (median-despeckled) max projection, exactly
+    # as the pipeline does; alignment from the mean projection.
+    from optomerge.calibration import _compute_limits
+    sr.limits = _compute_limits(sr.layout, sr.max_proj, 0.0)
     proj_channels = {c.name: c.calibrate() for c in sr.layout.split(sr.mean_proj)}
     reference = next(c for c in proj_channels.values() if c.reference)
     aligner = PhaseCorrelationAligner(use_scrub=use_scrub, upscale=upscale, max_shift=max_shift)

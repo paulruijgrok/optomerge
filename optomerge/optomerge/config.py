@@ -69,10 +69,12 @@ class ProcessingSettings:
     bunch_size: int = 100
     #: Projection used for per-channel normalisation limits: "max" (default;
     #: tracks per-frame peaks so moving filaments don't saturate) or "mean".
+    #: The projection is median-filtered first to remove cosmic rays.
     norm_projection: str = "max"
-    #: Percentile fraction excluded at each end when setting the limits, so a
-    #: hot pixel can't set vmax (0.001 = ignore the top/bottom 0.1%).
-    norm_exclude: float = 0.001
+    #: Extra percentile fraction excluded at each end when setting the limits.
+    #: 0 = plain min/max after median-despeckle (keeps sparse features like heads);
+    #: raise only if a channel still has outliers the median missed.
+    norm_exclude: float = 0.0
 
 
 @dataclass
