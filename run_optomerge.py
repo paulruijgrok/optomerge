@@ -183,7 +183,7 @@ def process_file(
     logger: logging.Logger,
     shared: "Calibration | None" = None,
     norm_from_max: bool = True,
-    norm_exclude: float = 0.001,
+    norm_exclude: float = 0.0,
 ) -> dict:
     """Calibrate, gate on acceptance, then merge one file.
 
