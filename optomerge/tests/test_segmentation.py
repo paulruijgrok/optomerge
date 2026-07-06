@@ -103,6 +103,25 @@ def test_column_trim_narrow_channel():
     assert 58 <= b1[1, 0] <= 62 and 156 <= b1[1, 1] <= 161
 
 
+def test_extent_from_max_projection():
+    # Extent is measured on the (max) projection passed as the primary image;
+    # a row lit only in some frames (bright in max, dim in mean) is kept.
+    max_im = _two_band_image()
+    mean_im = max_im * 0.3            # dimmer mean projection
+    b1, _, b2, _ = find_channel_bounds(max_im, mean_projection=mean_im)
+    assert 28 <= b1[0, 0] <= 32 and 76 <= b1[0, 1] <= 82      # top band from max
+    assert b2 is not None
+
+
+def test_extent_robust_to_hot_pixel():
+    # A lone cosmic ray in a dark margin row must not drag the crop up to it.
+    max_im = _two_band_image()             # top band rows 30..80
+    mean_im = max_im * 0.5
+    max_im[5, 120] = 1000.0                # hot pixel well above the top margin
+    b1, _, _, _ = find_channel_bounds(max_im, mean_projection=mean_im)
+    assert b1[0, 0] >= 25                   # top crop starts at the band, not row 5
+
+
 def test_manual_bounds_bypass_segmentation():
     # Manual bounds must not run segmentation (which would crash under the
     # row_profile default): they are converted directly.
