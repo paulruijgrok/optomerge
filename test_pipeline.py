@@ -115,6 +115,7 @@ def run_stages(
     verbose: bool,
     merge: bool = True,
     max_shift: float = 0.0,
+    rgb_bitdepth: int = 8,
 ) -> StageResult:
     """Execute the pipeline stage by stage, saving a diagnostic after each.
 
@@ -182,7 +183,7 @@ def run_stages(
     # ── 6. Save ───────────────────────────────────────────────────────────
     print("  [5/5] Saving ...")
     out_tif = out_dir / f"{stem}_aligned.tif"
-    rgb_movie.save(out_tif)
+    rgb_movie.save(out_tif, bit_depth=rgb_bitdepth)
     print(f"  Output folder: {out_dir}")
     return sr
 
@@ -331,6 +332,7 @@ def process_file(
     verbose: bool,
     merge: bool = True,
     max_shift: float = 0.0,
+    rgb_bitdepth: int = 8,
 ) -> dict:
     """Run the full pipeline on *src*, saving outputs + diagnostics to *dst_dir*."""
     result = dict(src=str(src), success=False, duration=0.0,
@@ -342,7 +344,7 @@ def process_file(
         sr = run_stages(
             src, channel_order, projection_frames, bg_radius,
             use_scrub, upscale, save_diag, dst_dir, stem, verbose, merge=merge,
-            max_shift=max_shift,
+            max_shift=max_shift, rgb_bitdepth=rgb_bitdepth,
         )
         result["n_frames"] = sr.n_frames
         if sr.transforms:
@@ -475,6 +477,7 @@ def main():
             use_scrub=settings.alignment.use_scrub, upscale=settings.alignment.upscale,
             save_diag=not args.no_diag, verbose=settings.runtime.verbose,
             merge=not args.no_merge, max_shift=settings.alignment.max_shift,
+            rgb_bitdepth=settings.io.rgb_bitdepth,
         )
         results.append(result)
         mins, secs = divmod(int(result["duration"]), 60)

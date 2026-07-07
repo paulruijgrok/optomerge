@@ -31,6 +31,9 @@ class IOSettings:
     suffix: str = "_aligned"
     #: Overwrite existing output files instead of skipping them.
     overwrite: bool = False
+    #: RGB output bit depth: 8 (default; compact, fixed-range display, like the
+    #: MATLAB reference) or 16 (more dynamic range, auto-contrasted in ImageJ).
+    rgb_bitdepth: int = 8
 
 
 @dataclass

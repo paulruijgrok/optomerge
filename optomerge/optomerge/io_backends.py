@@ -88,14 +88,14 @@ class MovieWriter(ABC):
         return _wrap
 
     @classmethod
-    def for_path(cls, path: str | Path) -> "MovieWriter":
+    def for_path(cls, path: str | Path, **kwargs) -> "MovieWriter":
         ext = Path(path).suffix.lower()
         if ext not in cls._registry:
             raise ValueError(
                 f"No MovieWriter registered for '{ext}'. "
                 f"Known: {sorted(cls._registry)}"
             )
-        return cls._registry[ext]()
+        return cls._registry[ext](**kwargs)
 
 
 @MovieReader.register(".tif", ".tiff")
@@ -113,7 +113,13 @@ class TiffReader(MovieReader):
 
 @MovieWriter.register(".tif", ".tiff")
 class TiffWriter(MovieWriter):
-    """Colour multi-page TIFF writer (wraps ``optomerge.io.save_rgb_tiff``)."""
+    """Colour multi-page TIFF writer (wraps ``optomerge.io.save_rgb_tiff``).
+
+    ``bit_depth`` is 8 (default, compact uint8 RGB) or 16.
+    """
+
+    def __init__(self, bit_depth: int = 8) -> None:
+        self.bit_depth = bit_depth
 
     def write(self, movie: "Movie", path: str | Path) -> None:
         arr = movie.to_array()
@@ -121,4 +127,4 @@ class TiffWriter(MovieWriter):
             raise ValueError(
                 f"TiffWriter expects an (H, W, 3, N) RGB movie, got {arr.shape}."
             )
-        save_rgb_tiff(path, arr)
+        save_rgb_tiff(path, arr, bit_depth=self.bit_depth)

@@ -65,6 +65,7 @@ class MergePipeline:
         verbose: bool = False,
         calibrator: Optional[Calibrator] = None,
         criteria: Optional[AcceptanceCriteria] = None,
+        rgb_bitdepth: int = 8,
     ) -> None:
         self.source = Path(source)
         self.layout = layout or ChannelLayout.auto()
@@ -74,6 +75,7 @@ class MergePipeline:
         self.projection_frames = projection_frames
         self.verbose = verbose
         self.criteria = criteria
+        self.rgb_bitdepth = rgb_bitdepth
         self.calibrator = calibrator or SingleProjectionCalibrator(
             layout=self.layout, aligner=self.aligner,
             projection_frames=projection_frames, criteria=criteria, verbose=verbose,
@@ -172,6 +174,6 @@ class MergePipeline:
         result = RGBMovie(merged, crop_range=crop_range, pixel_size=movie.pixel_size)
 
         if output is not None:
-            result.save(output)
+            result.save(output, bit_depth=self.rgb_bitdepth)
             self._log(f"Saved -> {output}")
         return result

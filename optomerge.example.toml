@@ -15,6 +15,7 @@ input = "test_data"                    # root directory of raw movies (scanned r
 output = "output_temp"                 # output root; input folder structure is mirrored
 suffix = "_aligned"                    # inserted before the .tif extension of each output
 overwrite = false                      # re-process files whose output already exists
+rgb_bitdepth = 8                       # RGB output bit depth: 8 (compact, fixed-range display) | 16
 
 [channels]
 channel_order = "auto"                 # auto | top_green_fils_bottom_red_heads | top_red_heads_bottom_green_fils

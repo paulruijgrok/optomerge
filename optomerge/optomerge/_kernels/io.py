@@ -170,21 +170,30 @@ def save_tiff(
         raise ValueError(f"Cannot save array with shape {arr.shape}.")
 
 
-def save_rgb_tiff(filename: str | Path, rgb_movie: np.ndarray) -> None:
+def save_rgb_tiff(filename: str | Path, rgb_movie: np.ndarray, bit_depth: int = 8) -> None:
     """Save an RGB movie as a colour multi-page TIFF.
 
     Parameters
     ----------
     filename : str or Path
     rgb_movie : np.ndarray
-        Shape ``(H, W, 3, N)`` with values in ``[0, 1]``.  Saved as uint16.
+        Shape ``(H, W, 3, N)`` with values in ``[0, 1]``.
+    bit_depth : int
+        8 (default) writes a uint8 RGB TIFF -- compact and shown at a fixed
+        0-255 range by viewers (matches the MATLAB reference); 16 writes uint16
+        (more dynamic range, but opens as an auto-contrasted composite in
+        ImageJ/Fiji).
     """
     if rgb_movie.ndim != 4 or rgb_movie.shape[2] != 3:
         raise ValueError(
             f"Expected shape (H, W, 3, N), got {rgb_movie.shape}."
         )
-    # Scale float [0,1] → uint16 [0,65535]
-    scaled = (np.clip(rgb_movie, 0, 1) * 65535).astype(np.uint16)
+    if bit_depth == 8:
+        scaled = (np.clip(rgb_movie, 0, 1) * 255).astype(np.uint8)
+    elif bit_depth == 16:
+        scaled = (np.clip(rgb_movie, 0, 1) * 65535).astype(np.uint16)
+    else:
+        raise ValueError(f"bit_depth must be 8 or 16, got {bit_depth}.")
     # (H, W, 3, N) → (N, H, W, 3)
     out = np.moveaxis(scaled, -1, 0)
     tifffile.imwrite(str(filename), out, photometric="rgb")

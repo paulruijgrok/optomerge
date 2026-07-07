@@ -26,6 +26,8 @@ Options
     --output DIR    Output directory                        (default: output_temp)
     --suffix STR    Suffix inserted before the extension    (default: _aligned)
     --overwrite     Overwrite existing output files
+    --rgb-bits 8|16 RGB output bit depth (default: 8; 8-bit is compact and shown
+                    at a fixed 0-255 range, 16-bit auto-contrasts in ImageJ)
     --channel-order STR
                     auto (default) |
                     top_green_fils_bottom_red_heads |
@@ -121,6 +123,7 @@ _CHANNEL_ORDERS = (
 # thus override the config file (unset flags keep the file/default value).
 _CLI_TO_FIELD = {
     "input": "input", "output": "output", "suffix": "suffix", "overwrite": "overwrite",
+    "rgb_bits": "rgb_bitdepth",
     "channel_order": "channel_order", "frames": "projection_frames",
     "segmentation": "segmentation",
     "bg_radius": "bg_radius", "bunch_size": "bunch_size",
@@ -184,6 +187,7 @@ def process_file(
     shared: "Calibration | None" = None,
     norm_from_max: bool = True,
     norm_exclude: float = 0.0,
+    rgb_bitdepth: int = 8,
 ) -> dict:
     """Calibrate, gate on acceptance, then merge one file.
 
@@ -206,7 +210,7 @@ def process_file(
                   if shared is not None else calibrator)
         pipe = MergePipeline(source=src, calibrator=active, bunch_size=bunch_size,
                              bg_radius=bg_radius, projection_frames=projection_frames,
-                             verbose=verbose)
+                             verbose=verbose, rgb_bitdepth=rgb_bitdepth)
 
         movie = RawMovie.open(src)
         try:
@@ -280,6 +284,8 @@ def main() -> None:
     parser.add_argument("--output", default=S, metavar="DIR")
     parser.add_argument("--suffix", default=S, metavar="STR")
     parser.add_argument("--overwrite", action="store_true", default=S)
+    parser.add_argument("--rgb-bits", type=int, default=S, choices=[8, 16], dest="rgb_bits",
+                        help="RGB output bit depth (default: 8)")
     parser.add_argument("--channel-order", default=S, choices=_CHANNEL_ORDERS,
                         dest="channel_order", metavar="STR")
     parser.add_argument("--frames", type=int, default=S, metavar="N",
@@ -402,6 +408,7 @@ def main() -> None:
             verbose=settings.runtime.verbose, logger=logger,
             norm_from_max=settings.processing.norm_projection == "max",
             norm_exclude=settings.processing.norm_exclude,
+            rgb_bitdepth=settings.io.rgb_bitdepth,
         )
 
     results: list[dict] = []

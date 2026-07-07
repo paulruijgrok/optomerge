@@ -22,7 +22,8 @@ python run_optomerge.py                      # process everything under test_dat
 
 Expected output: an aligned RGB TIFF for each input movie, written under
 `output_temp/` with the input folder structure mirrored and `_aligned` appended
-to each filename, plus a `run_log.txt` summarising the batch. Use
+to each filename, plus a `run_log.txt` summarising the batch. Output is 8-bit RGB
+by default (compact, fixed 0–255 display; `--rgb-bits 16` for 16-bit). Use
 `python run_optomerge.py --dry-run` first to see what would be processed.
 
 ## Installation
