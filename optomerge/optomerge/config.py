@@ -61,6 +61,10 @@ class AlignmentSettings:
     #: If > 0, constrain the fitted translation to ±max_shift px of the origin,
     #: ignoring spurious far-off correlation peaks. 0 = unconstrained.
     max_shift: float = 0.0
+    #: Search for inter-channel rotation + scale (True) or fit translation only
+    #: (False). For fixed optics (OptoSplit) a free rotation/scale search tends
+    #: to over-fit; translation-only is often more stable.
+    fit_scale_rotation: bool = True
 
 
 @dataclass
@@ -247,6 +251,7 @@ class Settings:
         return PhaseCorrelationAligner(
             init_rot=a.init_rot, init_s1=a.init_s1, init_s2=a.init_s2,
             use_scrub=a.use_scrub, upscale=a.upscale, max_shift=a.max_shift,
+            fit_scale_rotation=a.fit_scale_rotation,
         )
 
     def build_acceptance(self):

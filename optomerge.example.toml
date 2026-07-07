@@ -30,6 +30,8 @@ init_s1 = 1.0                          # initial guess: scale (axis 1)
 init_s2 = 1.0                          # initial guess: scale (axis 2)
 max_shift = 0.0                        # constrain translation to +/- px (0 = unconstrained);
                                        #   set ~30 when the true inter-channel shift is small
+fit_scale_rotation = true              # true = search rotation+scale; false = translation only
+                                       #   (more stable for fixed optics like an OptoSplit)
 
 [calibration]
 mode = "single"                        # single (one whole-movie projection) | robust (best-of-N over chunks)

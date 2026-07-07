@@ -62,6 +62,7 @@ class PhaseCorrelationAligner(Aligner):
         use_scrub: bool = False,
         upscale: int = 4,
         max_shift: float = 0.0,
+        fit_scale_rotation: bool = True,
     ) -> None:
         self.init_rot = init_rot
         self.init_s1 = init_s1
@@ -69,6 +70,7 @@ class PhaseCorrelationAligner(Aligner):
         self.use_scrub = use_scrub
         self.upscale = upscale
         self.max_shift = max_shift
+        self.fit_scale_rotation = fit_scale_rotation
 
     def align(self, reference: "Channel", moving: "Channel") -> Transform:
         if self.use_scrub:
@@ -82,7 +84,7 @@ class PhaseCorrelationAligner(Aligner):
 
         t1, t2, rot, s1, s2, score = calculate_alignment(
             ref_img, mov_img, self.init_rot, self.init_s1, self.init_s2,
-            max_shift=max_shift,
+            max_shift=max_shift, fit_scale_rotation=self.fit_scale_rotation,
         )
         transform = Transform(t1=t1, t2=t2, rot=rot, s1=s1, s2=s2, score=score)
 

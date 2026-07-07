@@ -129,6 +129,7 @@ _CLI_TO_FIELD = {
     "bg_radius": "bg_radius", "bunch_size": "bunch_size",
     "norm_projection": "norm_projection",
     "use_scrub": "use_scrub", "upscale": "upscale", "max_shift": "max_shift",
+    "fit_scale_rotation": "fit_scale_rotation",
     "calibration_mode": "mode",
     "group_by": "by", "group_token": "token_pattern",
     "reuse_alignment": "reuse_alignment", "verbose": "verbose", "dry_run": "dry_run",
@@ -301,6 +302,9 @@ def main() -> None:
     parser.add_argument("--upscale", type=int, default=S, metavar="N")
     parser.add_argument("--max-shift", type=float, default=S, metavar="PX", dest="max_shift",
                         help="constrain alignment translation to +/- PX px (0 = unconstrained)")
+    parser.add_argument("--no-rotation", action="store_const", const=False, default=S,
+                        dest="fit_scale_rotation",
+                        help="fit translation only (pin rotation/scale; avoids over-fitting)")
     parser.add_argument("--robust", action="store_const", const="robust", default=S,
                         dest="calibration_mode",
                         help="use the robust best-of-N calibrator")

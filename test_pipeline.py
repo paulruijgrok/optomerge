@@ -72,7 +72,7 @@ _CLI_TO_FIELD = {
     "input": "input", "output": "output",
     "channel_order": "channel_order", "frames": "projection_frames",
     "bg_radius": "bg_radius", "use_scrub": "use_scrub", "upscale": "upscale",
-    "max_shift": "max_shift",
+    "max_shift": "max_shift", "fit_scale_rotation": "fit_scale_rotation",
     "verbose": "verbose", "dry_run": "dry_run",
 }
 
@@ -116,6 +116,7 @@ def run_stages(
     merge: bool = True,
     max_shift: float = 0.0,
     rgb_bitdepth: int = 8,
+    fit_scale_rotation: bool = True,
 ) -> StageResult:
     """Execute the pipeline stage by stage, saving a diagnostic after each.
 
@@ -149,7 +150,8 @@ def run_stages(
     sr.limits = _compute_limits(sr.layout, sr.max_proj, 0.0)
     proj_channels = {c.name: c.calibrate() for c in sr.layout.split(sr.mean_proj)}
     reference = next(c for c in proj_channels.values() if c.reference)
-    aligner = PhaseCorrelationAligner(use_scrub=use_scrub, upscale=upscale, max_shift=max_shift)
+    aligner = PhaseCorrelationAligner(use_scrub=use_scrub, upscale=upscale,
+                                      max_shift=max_shift, fit_scale_rotation=fit_scale_rotation)
     for spec in sr.layout.moving_specs:
         sr.transforms[spec.name] = aligner.align(reference, proj_channels[spec.name])
 
@@ -333,6 +335,7 @@ def process_file(
     merge: bool = True,
     max_shift: float = 0.0,
     rgb_bitdepth: int = 8,
+    fit_scale_rotation: bool = True,
 ) -> dict:
     """Run the full pipeline on *src*, saving outputs + diagnostics to *dst_dir*."""
     result = dict(src=str(src), success=False, duration=0.0,
@@ -345,6 +348,7 @@ def process_file(
             src, channel_order, projection_frames, bg_radius,
             use_scrub, upscale, save_diag, dst_dir, stem, verbose, merge=merge,
             max_shift=max_shift, rgb_bitdepth=rgb_bitdepth,
+            fit_scale_rotation=fit_scale_rotation,
         )
         result["n_frames"] = sr.n_frames
         if sr.transforms:
@@ -394,6 +398,9 @@ def main():
                    help="Scrub upscaling factor when --use-scrub (default: 4)")
     p.add_argument("--max-shift", type=float, default=S, metavar="PX", dest="max_shift",
                    help="constrain alignment translation to +/- PX px (0 = unconstrained)")
+    p.add_argument("--no-rotation", action="store_const", const=False, default=S,
+                   dest="fit_scale_rotation",
+                   help="fit translation only (pin rotation/scale)")
     p.add_argument("--verbose", action="store_true", default=S,
                    help="Show detailed per-step progress")
     p.add_argument("--dry-run", action="store_true", default=S, dest="dry_run",
@@ -478,6 +485,7 @@ def main():
             save_diag=not args.no_diag, verbose=settings.runtime.verbose,
             merge=not args.no_merge, max_shift=settings.alignment.max_shift,
             rgb_bitdepth=settings.io.rgb_bitdepth,
+            fit_scale_rotation=settings.alignment.fit_scale_rotation,
         )
         results.append(result)
         mins, secs = divmod(int(result["duration"]), 60)
