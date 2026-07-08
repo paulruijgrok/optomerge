@@ -196,15 +196,19 @@ class FeatureDistanceAligner(Aligner):
     def _distances(self, per_frame, t1: float, t2: float) -> np.ndarray:
         """Head-to-nearest-filament distances if the moving channel shifts by (t1, t2).
 
-        A head at ``(row, col)`` maps to ``(row + t2, col + t1)`` (Transform's
-        forward convention for rot=0, s=1: ``t1 -> x/col``, ``t2 -> y/row``).
+        ``transform_image`` is an inverse (destination->source) warp: applying it
+        with translation ``(t1, t2)`` moves a feature by ``(-t2 row, -t1 col)``
+        (verified against the kernel). So a head detected at ``(row, col)`` lands
+        at ``(row - t2, col - t1)`` after the transform is applied downstream --
+        that is the position whose distance to the filament we must minimise, so
+        the fitted ``t`` is the value the pipeline actually applies.
         Out-of-bounds heads are charged ``distance_cap`` so the search cannot
         cheat by pushing heads off the image. Returns one distance per head.
         """
         out = []
         for rows, cols, dt in per_frame:
-            rr = np.round(rows + t2).astype(int)
-            cc = np.round(cols + t1).astype(int)
+            rr = np.round(rows - t2).astype(int)
+            cc = np.round(cols - t1).astype(int)
             ok = (rr >= 0) & (rr < dt.shape[0]) & (cc >= 0) & (cc < dt.shape[1])
             d = np.full(rows.shape, self.distance_cap, dtype=np.float64)
             if ok.any():

@@ -364,8 +364,9 @@ def save_diag_feature_detection(aligner, ref_channel, mov_channel, transform,
             ax.contour(fil.astype(float), levels=[0.5], colors="lime", linewidths=0.8)
         n_in = 0
         if rows.size:
-            rr = rows + transform.t2
-            cc = cols + transform.t1
+            # transform_image is an inverse warp: it moves a head by (-t2, -t1).
+            rr = rows - transform.t2
+            cc = cols - transform.t1
             # Classify each registered head as inlier (on a filament, dist < cap)
             # or orphan, mirroring the robust cost.
             inlier = np.ones(rows.shape, dtype=bool)

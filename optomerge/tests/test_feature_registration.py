@@ -26,25 +26,26 @@ def _dot_dt(shape, r0, c0):
 
 
 def test_recovers_diagonal_shift(monkeypatch):
-    # Filament dot at (50, 50); heads recorded at (47, 47) -> need +3 row, +3 col.
+    # Filament dot at (50, 50); heads at (47, 47). transform_image moves a head by
+    # (-t2, -t1), so landing (47,47) on (50,50) needs t = head - filament = (-3, -3).
     dt = _dot_dt((100, 100), 50, 50)
     per_frame = [(np.array([47.0]), np.array([47.0]), dt) for _ in range(4)]
     a = FeatureDistanceAligner(max_shift=10, step=1.0)
     monkeypatch.setattr(a, "_detect", lambda ref, mov: per_frame)
     t = a.align(object(), object())
-    assert abs(t.t1 - 3.0) < 0.6   # t1 -> columns
-    assert abs(t.t2 - 3.0) < 0.6   # t2 -> rows
-    assert t.score > 0.9           # mean distance ~0 at the optimum
+    assert abs(t.t1 - (-3.0)) < 0.6   # t1 -> columns
+    assert abs(t.t2 - (-3.0)) < 0.6   # t2 -> rows
+    assert t.score > 0.9              # mean distance ~0 at the optimum
 
 
 def test_recovers_single_axis_shift(monkeypatch):
-    # Heads offset in columns only (45 -> 50): expect t1=+5, t2=0.
+    # Head at col 45, filament at col 50: t1 = head - filament = -5, t2 = 0.
     dt = _dot_dt((100, 100), 50, 50)
     per_frame = [(np.array([50.0]), np.array([45.0]), dt) for _ in range(3)]
     a = FeatureDistanceAligner(max_shift=12, step=1.0)
     monkeypatch.setattr(a, "_detect", lambda ref, mov: per_frame)
     t = a.align(object(), object())
-    assert abs(t.t1 - 5.0) < 0.6
+    assert abs(t.t1 - (-5.0)) < 0.6
     assert abs(t.t2 - 0.0) < 0.6
 
 
@@ -59,7 +60,8 @@ def test_robust_to_orphan_heads(monkeypatch):
     monkeypatch.setattr(a, "_detect", lambda ref, mov: per_frame)
     t = a.align(object(), object())
     # Orphans (capped) must not drag the fit away from the real heads.
-    assert abs(t.t1 - 3.0) < 0.6 and abs(t.t2 - 3.0) < 0.6
+    # Inliers (47,47) onto (50,50): t = head - filament = (-3, -3).
+    assert abs(t.t1 - (-3.0)) < 0.6 and abs(t.t2 - (-3.0)) < 0.6
     # Score reflects the inlier fraction (~half the heads are on filament).
     assert 0.3 < t.score < 0.7
 
@@ -144,28 +146,35 @@ def test_detection_filters_noise():
 
 
 def test_end_to_end_recovers_shift():
+    """Fit, then actually apply the transform: the head must land on the filament.
+
+    This is the regression guard for the transform sign -- it fails if the fitted
+    translation is applied in the wrong direction.
+    """
     pytest.importorskip("scipy")
     from optomerge.channel import Channel
+    from optomerge._kernels.transform import transform_image
 
     H = W = 40
     n = 5
     bounds = np.array([[0, H - 1], [0, W - 1]])
-    # Filament: a bright horizontal bar; head: a bright dot sitting on it, but the
-    # recorded red dot is offset by (+4 row, -3 col) from the true filament point.
+    # Filament: a bright horizontal bar at rows 19-21; head displaced +4 rows off it.
     green = np.zeros((H, W, n))
     green[19:22, 5:35, :] = 6.0
-    true_r, true_c = 20, 20
-    off_r, off_c = 4, -3           # red head displaced from its true position
+    off_r = 4
+    head_r, head_c = 20 + off_r, 20
     red = np.zeros((H, W, n))
-    red[true_r + off_r, true_c + off_c, :] = 9.0
+    red[head_r - 1:head_r + 2, head_c - 1:head_c + 2, :] = 9.0  # 3x3 blob (area 9)
 
     ref = Channel(green, "green", bounds, color="green", reference=True)
     mov = Channel(red, "red", bounds, color="red")
     a = FeatureDistanceAligner(max_shift=8, step=1.0)
     t = a.align(ref, mov)
-    # To land the head back on the bar we must shift it by (-off_r, -off_c).
-    assert abs(t.t2 - (-off_r)) <= 1.0    # rows
-    # Column: the bar spans many columns, so any small |t1| that keeps the head
-    # on the bar is acceptable; just check it stays bounded and finite.
-    assert abs(t.t1) <= a.max_shift
+
+    # Apply the fitted transform to the head frame; it must move onto the bar.
+    warped = transform_image(red[:, :, 0], 0.0, 1.0, 1.0, tx=t.t1, ty=t.t2,
+                             backend="scipy", n_workers=1)
+    r_land, c_land = np.unravel_index(int(np.argmax(warped)), warped.shape)
+    assert 19 <= r_land <= 21, f"head landed at row {r_land}, not on the bar (19-21)"
+    assert 5 <= c_land <= 34
     assert np.isfinite(t.score)
