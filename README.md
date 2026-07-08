@@ -179,7 +179,11 @@ bias the fit, and `deweight_stuck` weights each head by `1/persistence` so a few
 long-stuck objects can't dominate the field (they'd otherwise be counted once per
 frame).
 The `--feature` diagnostic run writes `diag_06`, a per-frame overlay of the
-detected heads and filament outline, for exactly this tuning. This is the first tailored algorithm behind the `Aligner` seam;
+detected heads and filament outline, for exactly this tuning.
+
+See [docs/feature_registration.md](docs/feature_registration.md) for the full
+algorithm, parameter reference, and the roadmap (constrained rotation/scale next,
+plus general-purpose aligners for the wider OptoSplit community). This is the first tailored algorithm behind the `Aligner` seam;
 it is opt-in and does not change the default `phase` behaviour. Current scope:
 translation only — rotation/scale and richer detectors are future work.
 
