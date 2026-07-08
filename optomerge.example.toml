@@ -36,6 +36,9 @@ head_max_area = 60                     # (feature) drop head blobs larger than t
 filament_min_area = 20                 # (feature) despeckle: drop filament-mask blobs smaller than this (px)
 distance_cap = 6.0                     # (feature) heads farther than this (px) from any filament are
                                        #   treated as orphans (red-only / undetected) and don't bias the fit
+deweight_stuck = false                 # (feature) weight heads by 1/persistence so a stuck object counts
+                                       #   once, not once-per-frame (restores field coverage)
+stuck_radius = 2.0                     # (feature) px within which cross-frame detections are the same stuck object
 use_scrub = false                      # align on upsampled scrub images (sub-pixel accuracy)
 upscale = 4                            # scrub upscaling factor when use_scrub = true
 init_rot = 0.0                         # initial guess: rotation (radians)

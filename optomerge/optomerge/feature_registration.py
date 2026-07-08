@@ -86,6 +86,13 @@ class FeatureDistanceAligner(Aligner):
         filament too faint to detect): its distance is clipped to ``distance_cap``
         in the cost, so it contributes a constant and cannot bias the fit. Also
         defines the inlier set used for the reported score.
+    deweight_stuck : bool
+        If True, weight each head by ``1 / persistence`` so a stuck (long-lived)
+        object counts once rather than once-per-frame, restoring field coverage
+        when a few stuck objects would otherwise dominate the fit.
+    stuck_radius : float
+        Two detections in different frames within this many pixels are treated as
+        the same (stuck) object when computing persistence.
     refine : bool
         Run a parabolic sub-pixel refinement around the best grid cell.
     """
@@ -102,6 +109,8 @@ class FeatureDistanceAligner(Aligner):
         max_head_area: Optional[int] = 60,
         filament_min_area: int = 20,
         distance_cap: float = 6.0,
+        deweight_stuck: bool = False,
+        stuck_radius: float = 2.0,
         refine: bool = True,
     ) -> None:
         if max_shift <= 0:
@@ -114,6 +123,8 @@ class FeatureDistanceAligner(Aligner):
         self.max_head_area = None if max_head_area is None else int(max_head_area)
         self.filament_min_area = int(filament_min_area)
         self.distance_cap = float(distance_cap)
+        self.deweight_stuck = bool(deweight_stuck)
+        self.stuck_radius = float(stuck_radius)
         self.refine = bool(refine)
 
     # -- detection --------------------------------------------------------- #
@@ -216,19 +227,49 @@ class FeatureDistanceAligner(Aligner):
             out.append(d)
         return np.concatenate(out) if out else np.empty(0)
 
-    def _robust_cost(self, per_frame, t1: float, t2: float) -> float:
-        """Mean **capped** head-to-filament distance -- robust to orphan heads.
+    def _stuck_weights(self, per_frame) -> np.ndarray:
+        """Per-head weights that down-weight stuck (persistent) objects.
 
-        Each head's distance is clipped to ``distance_cap`` before averaging, so a
-        head with no filament nearby (a red-only object, or a filament too faint
-        to detect) contributes a constant regardless of the translation and cannot
-        bias the fit. The minimum is therefore driven by the heads that *do* sit
-        on filaments.
+        A stuck head sits at the same pixel in many sampled frames, so it would
+        otherwise be counted once per frame and dominate the fit's field coverage.
+        Each head is weighted by ``1 / persistence``, where *persistence* is the
+        number of distinct frames containing a head within ``stuck_radius`` of it.
+        A head stuck across all N frames contributes weight ``1/N`` (one physical
+        object, one vote); a head at a unique position contributes ``1``.
+
+        Returned in the same flat order as :meth:`_distances` (frame-major).
+        Weights are translation-independent (they depend only on where heads are
+        detected), so this is computed once. Returns all-ones when disabled.
         """
-        d = self._distances(per_frame, t1, t2)
-        if d.size == 0:
-            return float("inf")
-        return float(np.minimum(d, self.distance_cap).mean())
+        pts, frame_id = [], []
+        for k, (rows, cols, _dt) in enumerate(per_frame):
+            for r, c in zip(rows, cols):
+                pts.append((r, c))
+                frame_id.append(k)
+        n = len(pts)
+        if not self.deweight_stuck or n == 0:
+            return np.ones(n, dtype=np.float64)
+
+        P = np.asarray(pts, dtype=np.float64)
+        F = np.asarray(frame_id)
+        r2 = self.stuck_radius ** 2
+        w = np.empty(n, dtype=np.float64)
+        for i in range(n):
+            near = ((P - P[i]) ** 2).sum(axis=1) <= r2
+            persistence = np.unique(F[near]).size
+            w[i] = 1.0 / max(persistence, 1)
+        return w
+
+    def _quality(self, d: np.ndarray, w: np.ndarray) -> float:
+        """Weighted inlier score: inlier weight fraction / (1 + weighted inlier mean)."""
+        if d.size == 0 or w.sum() == 0:
+            return 0.0
+        inlier = d < self.distance_cap
+        wsum = w.sum()
+        inlier_frac = w[inlier].sum() / wsum
+        inlier_mean = ((d[inlier] * w[inlier]).sum() / w[inlier].sum()
+                       if w[inlier].sum() > 0 else self.distance_cap)
+        return float(inlier_frac / (1.0 + inlier_mean))
 
     # -- Aligner API ------------------------------------------------------- #
 
@@ -238,6 +279,10 @@ class FeatureDistanceAligner(Aligner):
             # No detectable features -> no evidence to move; return identity.
             return Transform(score=0.0)
 
+        weights = self._stuck_weights(per_frame)
+        wsum = weights.sum()
+        if wsum == 0:
+            return Transform(score=0.0)
         grid = np.arange(-self.max_shift, self.max_shift + 1e-9, self.step)
 
         best_cost = float("inf")
@@ -245,7 +290,10 @@ class FeatureDistanceAligner(Aligner):
         costs = np.empty((grid.size, grid.size), dtype=np.float64)
         for i, t2 in enumerate(grid):          # rows
             for j, t1 in enumerate(grid):      # cols
-                c = self._robust_cost(per_frame, t1, t2)
+                d = self._distances(per_frame, t1, t2)
+                # Weighted mean of capped distances: robust to orphan heads
+                # (cap) and to stuck objects dominating (weights).
+                c = float((np.minimum(d, self.distance_cap) * weights).sum() / wsum)
                 costs[i, j] = c
                 if c < best_cost:
                     best_cost = c
@@ -255,13 +303,7 @@ class FeatureDistanceAligner(Aligner):
         if self.refine:
             t1, t2 = self._refine(costs, grid, best)
 
-        # Report quality from the *inliers* -- heads that actually landed on a
-        # filament (distance < cap) -- so orphan heads don't drag the score down.
-        d = self._distances(per_frame, t1, t2)
-        inliers = d[d < self.distance_cap]
-        inlier_frac = inliers.size / d.size if d.size else 0.0
-        inlier_mean = float(inliers.mean()) if inliers.size else self.distance_cap
-        score = inlier_frac / (1.0 + inlier_mean)  # high = many heads, tightly on filament
+        score = self._quality(self._distances(per_frame, t1, t2), weights)
         return Transform(t1=float(t1), t2=float(t2), rot=0.0, s1=1.0, s2=1.0, score=float(score))
 
     def _refine(self, costs: np.ndarray, grid: np.ndarray, best) -> Tuple[float, float]:

@@ -71,6 +71,13 @@ class AlignmentSettings:
     #: is treated as an orphan (red-only object / undetected filament) and cannot
     #: bias the fit. Also the inlier threshold for the reported score.
     distance_cap: float = 6.0
+    #: "feature" down-weight stuck objects: weight each head by 1/persistence so a
+    #: long-lived (stuck) object counts once, not once-per-frame. Restores field
+    #: coverage when a few stuck objects would otherwise dominate the fit.
+    deweight_stuck: bool = False
+    #: "feature" radius (pixels) within which detections in different frames are
+    #: treated as the same stuck object for the persistence count.
+    stuck_radius: float = 2.0
     #: Align on upsampled scrub images for sub-pixel accuracy.
     use_scrub: bool = False
     #: Scrub-image upscaling factor when ``use_scrub`` is set.
@@ -277,6 +284,7 @@ class Settings:
                 head_sigma=a.head_sigma, filament_sigma=a.filament_sigma,
                 min_head_area=a.head_min_area, max_head_area=a.head_max_area,
                 filament_min_area=a.filament_min_area, distance_cap=a.distance_cap,
+                deweight_stuck=a.deweight_stuck, stuck_radius=a.stuck_radius,
             )
         from .registration import PhaseCorrelationAligner
         return PhaseCorrelationAligner(

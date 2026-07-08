@@ -173,6 +173,11 @@ config section: `head_sigma` / `filament_sigma` (thresholds in std-devs above ea
 channel's mean), `head_min_area` / `head_max_area` (keep only point-like head
 blobs), `filament_min_area` (drop background speckle from the filament mask), and
 `feature_frames` (how many frames to sample — raise it for sparse or dim movies).
+Two robustness options handle awkward data: `distance_cap` clips the distance of
+"orphan" heads (red-only objects, or filaments too faint to detect) so they can't
+bias the fit, and `deweight_stuck` weights each head by `1/persistence` so a few
+long-stuck objects can't dominate the field (they'd otherwise be counted once per
+frame).
 The `--feature` diagnostic run writes `diag_06`, a per-frame overlay of the
 detected heads and filament outline, for exactly this tuning. This is the first tailored algorithm behind the `Aligner` seam;
 it is opt-in and does not change the default `phase` behaviour. Current scope:

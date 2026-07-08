@@ -130,6 +130,7 @@ _CLI_TO_FIELD = {
     "norm_projection": "norm_projection",
     "use_scrub": "use_scrub", "upscale": "upscale", "max_shift": "max_shift",
     "fit_scale_rotation": "fit_scale_rotation", "align_method": "method",
+    "deweight_stuck": "deweight_stuck",
     "calibration_mode": "mode",
     "group_by": "by", "group_token": "token_pattern",
     "reuse_alignment": "reuse_alignment", "verbose": "verbose", "dry_run": "dry_run",
@@ -312,6 +313,9 @@ def main() -> None:
     parser.add_argument("--feature", action="store_const", const="feature", default=S,
                         dest="align_method",
                         help="shorthand for --align-method feature")
+    parser.add_argument("--deweight-stuck", action="store_true", default=S,
+                        dest="deweight_stuck",
+                        help="(feature) down-weight stuck objects (count once, not per-frame)")
     parser.add_argument("--robust", action="store_const", const="robust", default=S,
                         dest="calibration_mode",
                         help="use the robust best-of-N calibrator")

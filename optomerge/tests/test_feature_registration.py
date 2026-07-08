@@ -66,6 +66,46 @@ def test_robust_to_orphan_heads(monkeypatch):
     assert 0.3 < t.score < 0.7
 
 
+def test_stuck_weights_downweight():
+    # A head stuck at (5,5) across 3 frames should weight 1/3; unique heads weight 1.
+    dummy = np.zeros((2, 2))
+    per_frame = [
+        (np.array([5.0, 10.0]), np.array([5.0, 40.0]), dummy),
+        (np.array([5.0, 20.0]), np.array([5.0, 40.0]), dummy),
+        (np.array([5.0, 30.0]), np.array([5.0, 40.0]), dummy),
+    ]
+    a = FeatureDistanceAligner(max_shift=8, deweight_stuck=True, stuck_radius=2.0)
+    w = a._stuck_weights(per_frame)
+    np.testing.assert_allclose(w, [1/3, 1, 1/3, 1, 1/3, 1], atol=1e-9)
+    # Disabled -> all ones.
+    a2 = FeatureDistanceAligner(max_shift=8, deweight_stuck=False)
+    np.testing.assert_allclose(a2._stuck_weights(per_frame), np.ones(6))
+
+
+def test_deweight_stuck_overrides_dominant_stuck_object(monkeypatch):
+    # Filament = vertical line at col 50 -> distance depends only on column.
+    H = W = 60
+    dt = np.abs(np.arange(W)[None, :] - 50).repeat(H, axis=0).astype(float)
+    # Stuck head at (5,55) in all 10 frames -> wants t1 = col-50 = +5 (lands col 50).
+    # Three moving inlier heads at col 47 (unique rows) -> want t1 = -3.
+    per_frame = []
+    for k in range(10):
+        rows = [5.0]; cols = [55.0]
+        if k < 3:
+            rows.append(10.0 + 10 * k); cols.append(47.0)
+        per_frame.append((np.array(rows), np.array(cols), dt))
+
+    a_off = FeatureDistanceAligner(max_shift=8, step=1.0, distance_cap=50,
+                                   deweight_stuck=False)
+    a_off._detect = lambda ref, mov: per_frame
+    assert a_off.align(object(), object()).t1 > 3        # stuck object dominates -> ~+5
+
+    a_on = FeatureDistanceAligner(max_shift=8, step=1.0, distance_cap=50,
+                                  deweight_stuck=True, stuck_radius=2.0)
+    a_on._detect = lambda ref, mov: per_frame
+    assert a_on.align(object(), object()).t1 < -1        # moving heads win -> ~-3
+
+
 def test_no_features_returns_identity(monkeypatch):
     a = FeatureDistanceAligner(max_shift=8)
     monkeypatch.setattr(a, "_detect", lambda ref, mov: [])
@@ -101,11 +141,13 @@ def test_config_selects_feature_aligner():
     s = Settings.from_sources({"alignment": {
         "method": "feature", "head_sigma": 4.0, "max_shift": 20,
         "head_min_area": 5, "head_max_area": 80, "filament_min_area": 30,
+        "deweight_stuck": True, "stuck_radius": 3.0,
     }})
     a = s.build_aligner()
     assert isinstance(a, FeatureDistanceAligner)
     assert a.max_shift == 20 and a.head_sigma == 4.0
     assert a.min_head_area == 5 and a.max_head_area == 80 and a.filament_min_area == 30
+    assert a.deweight_stuck is True and a.stuck_radius == 3.0
     # Default calibrator threads feature_frames through (default bumped to 60).
     assert s.build_calibrator().feature_frames == 60
 

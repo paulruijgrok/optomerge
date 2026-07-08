@@ -73,7 +73,7 @@ _CLI_TO_FIELD = {
     "channel_order": "channel_order", "frames": "projection_frames",
     "bg_radius": "bg_radius", "use_scrub": "use_scrub", "upscale": "upscale",
     "max_shift": "max_shift", "fit_scale_rotation": "fit_scale_rotation",
-    "align_method": "method",
+    "align_method": "method", "deweight_stuck": "deweight_stuck",
     "verbose": "verbose", "dry_run": "dry_run",
 }
 
@@ -120,6 +120,7 @@ def run_stages(
     fit_scale_rotation: bool = True,
     align_method: str = "phase",
     feature_frames: int = 40,
+    feature_aligner=None,
 ) -> StageResult:
     """Execute the pipeline stage by stage, saving a diagnostic after each.
 
@@ -155,7 +156,10 @@ def run_stages(
     if align_method == "feature":
         from optomerge import FeatureDistanceAligner
         from optomerge.calibration import _sample_frame_stack
-        aligner = FeatureDistanceAligner(max_shift=max_shift if max_shift > 0 else 30.0)
+        # Prefer the fully-configured aligner from settings (honours head_sigma,
+        # deweight_stuck, etc.); fall back to a max_shift-only default.
+        aligner = feature_aligner or FeatureDistanceAligner(
+            max_shift=max_shift if max_shift > 0 else 30.0)
         frame_stack = _sample_frame_stack(movie, feature_frames, limit=projection_frames)
         align_channels = {c.name: c for c in sr.layout.split(frame_stack)}
     else:
@@ -432,6 +436,7 @@ def process_file(
     fit_scale_rotation: bool = True,
     align_method: str = "phase",
     feature_frames: int = 40,
+    feature_aligner=None,
 ) -> dict:
     """Run the full pipeline on *src*, saving outputs + diagnostics to *dst_dir*."""
     result = dict(src=str(src), success=False, duration=0.0,
@@ -446,6 +451,7 @@ def process_file(
             max_shift=max_shift, rgb_bitdepth=rgb_bitdepth,
             fit_scale_rotation=fit_scale_rotation,
             align_method=align_method, feature_frames=feature_frames,
+            feature_aligner=feature_aligner,
         )
         result["n_frames"] = sr.n_frames
         if sr.transforms:
@@ -504,6 +510,9 @@ def main():
                         "(head-to-filament distance)")
     p.add_argument("--feature", action="store_const", const="feature", default=S,
                    dest="align_method", help="shorthand for --align-method feature")
+    p.add_argument("--deweight-stuck", action="store_true", default=S,
+                   dest="deweight_stuck",
+                   help="(feature) down-weight stuck objects (count once, not per-frame)")
     p.add_argument("--verbose", action="store_true", default=S,
                    help="Show detailed per-step progress")
     p.add_argument("--dry-run", action="store_true", default=S, dest="dry_run",
@@ -593,6 +602,8 @@ def main():
             fit_scale_rotation=settings.alignment.fit_scale_rotation,
             align_method=settings.alignment.method,
             feature_frames=settings.alignment.feature_frames,
+            feature_aligner=(settings.build_aligner()
+                             if settings.alignment.method == "feature" else None),
         )
         results.append(result)
         mins, secs = divmod(int(result["duration"]), 60)
