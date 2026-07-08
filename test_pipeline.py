@@ -175,6 +175,13 @@ def run_stages(
         save_diag_segmentation(sr, out_dir, stem)
         save_diag_channels(sr, out_dir, stem)
         save_diag_alignment(sr, out_dir, stem)
+        if align_method == "feature":
+            ref_name = reference.name
+            mov_name = next(s.name for s in sr.layout.moving_specs)
+            save_diag_feature_detection(
+                aligner, align_channels[ref_name], align_channels[mov_name],
+                sr.transforms[mov_name], out_dir, stem,
+            )
 
     if not merge:
         print("  [skip merge] --no-merge: detection/alignment diagnostics only")
@@ -312,6 +319,61 @@ def save_diag_alignment(sr: StageResult, out_dir: Path, stem: str):
     fig.suptitle(stem, fontsize=8)
     fig.tight_layout()
     fig.savefig(out_dir / f"{stem}_diag_04_alignment.png", dpi=150)
+    plt.close(fig)
+
+
+def save_diag_feature_detection(aligner, ref_channel, mov_channel, transform,
+                                out_dir: Path, stem: str, n_show: int = 6):
+    """Diag 06 – what the feature aligner detected + where the fit lands the heads.
+
+    For a handful of the sampled frames, overlays on the green (reference) frame:
+    the filament mask outline, each detected red head centroid (red x), and that
+    head after registration (yellow o = centroid + fitted translation). A good
+    fit puts every yellow o on the filament outline. This is the per-frame view
+    behind the single mean-projection overlay in diag 04.
+    """
+    green = np.asarray(ref_channel.data, dtype=np.float64)
+    red = np.asarray(mov_channel.data, dtype=np.float64)
+    if green.ndim == 2:
+        green = green[:, :, None]
+        red = red[:, :, None]
+    n = green.shape[2]
+    if n == 0:
+        return
+    k_show = np.unique(np.linspace(0, n - 1, min(n_show, n)).astype(int))
+
+    ncol = min(3, len(k_show))
+    nrow = int(np.ceil(len(k_show) / ncol))
+    fig, axes = plt.subplots(nrow, ncol, figsize=(4 * ncol, 4 * nrow), squeeze=False)
+    for ax in axes.flat:
+        ax.axis("off")
+
+    for ax, k in zip(axes.flat, k_show):
+        g = green[:, :, k]
+        rows, cols, fil = aligner.frame_features(g, red[:, :, k])
+        vmax = np.percentile(g, 99.5) if g.max() > 0 else 1.0
+        ax.imshow(g, cmap="gray", vmin=g.min(), vmax=vmax,
+                  aspect="auto", interpolation="nearest")
+        if fil.any():
+            ax.contour(fil.astype(float), levels=[0.5], colors="lime", linewidths=0.8)
+        if rows.size:
+            ax.plot(cols, rows, "x", color="red", markersize=7, mew=1.5,
+                    label="detected head")
+            ax.plot(cols + transform.t1, rows + transform.t2, "o",
+                    mfc="none", mec="yellow", markersize=9, mew=1.5,
+                    label="after registration")
+        ax.set_title(f"sampled frame {k}  ({rows.size} head{'s' if rows.size != 1 else ''})",
+                     fontsize=8)
+
+    handles, labels = axes.flat[0].get_legend_handles_labels()
+    if handles:
+        fig.legend(handles, labels, loc="lower center", ncol=2, fontsize=8,
+                   framealpha=0.8, bbox_to_anchor=(0.5, -0.02))
+    fig.suptitle(f"{stem}\nfeature detection (green=filament outline, red x=head, "
+                 f"yellow o=head after registration)  t=({transform.t1:.2f},{transform.t2:.2f})",
+                 fontsize=9)
+    fig.tight_layout(rect=(0, 0.03, 1, 0.96))
+    fig.savefig(out_dir / f"{stem}_diag_06_feature_detection.png", dpi=150)
     plt.close(fig)
 
 

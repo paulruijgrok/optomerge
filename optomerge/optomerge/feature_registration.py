@@ -97,6 +97,36 @@ class FeatureDistanceAligner(Aligner):
 
     # -- detection --------------------------------------------------------- #
 
+    def frame_features(self, green: np.ndarray, red: np.ndarray):
+        """Detect head centroids + the filament mask in one aligned frame pair.
+
+        Returns ``(head_rows, head_cols, filament_mask)``. ``head_rows`` /
+        ``head_cols`` are the centroids of head blobs in ``red`` (empty arrays if
+        none pass the area/threshold gate); ``filament_mask`` is the boolean
+        filament mask in ``green``. Shared by the alignment objective (:meth:`_detect`)
+        and the diagnostic overlay so both use identical thresholds.
+        """
+        from scipy import ndimage
+
+        g = np.asarray(green, dtype=np.float64)
+        r = np.asarray(red, dtype=np.float64)
+        fil = g > (g.mean() + self.filament_sigma * g.std())
+
+        empty = np.empty(0, dtype=np.float64)
+        hmask = r > (r.mean() + self.head_sigma * r.std())
+        if not hmask.any():
+            return empty, empty, fil
+        labels, n_blobs = ndimage.label(hmask)
+        if n_blobs == 0:
+            return empty, empty, fil
+        areas = ndimage.sum(np.ones_like(hmask), labels, index=range(1, n_blobs + 1))
+        keep = [i + 1 for i, a in enumerate(areas) if a >= self.min_head_area]
+        if not keep:
+            return empty, empty, fil
+        cents = np.atleast_2d(np.asarray(ndimage.center_of_mass(hmask, labels, index=keep),
+                                         dtype=np.float64))
+        return cents[:, 0], cents[:, 1], fil
+
     def _detect(self, reference: "Channel", moving: "Channel"):
         """Per-frame head centroids (moving) + filament distance transforms (reference).
 
@@ -113,29 +143,12 @@ class FeatureDistanceAligner(Aligner):
             red = red[:, :, None]
 
         per_frame: List[Tuple[np.ndarray, np.ndarray, np.ndarray]] = []
-        n = red.shape[2]
-        for k in range(n):
-            g = green[:, :, k]
-            r = red[:, :, k]
-
-            fil = g > (g.mean() + self.filament_sigma * g.std())
-            if not fil.any():
+        for k in range(red.shape[2]):
+            rows, cols, fil = self.frame_features(green[:, :, k], red[:, :, k])
+            if rows.size == 0 or not fil.any():
                 continue
             dt = ndimage.distance_transform_edt(~fil)
-
-            hmask = r > (r.mean() + self.head_sigma * r.std())
-            if not hmask.any():
-                continue
-            labels, n_blobs = ndimage.label(hmask)
-            if n_blobs == 0:
-                continue
-            areas = ndimage.sum(np.ones_like(hmask), labels, index=range(1, n_blobs + 1))
-            keep = [i + 1 for i, a in enumerate(areas) if a >= self.min_head_area]
-            if not keep:
-                continue
-            cents = ndimage.center_of_mass(hmask, labels, index=keep)
-            cents = np.atleast_2d(np.asarray(cents, dtype=np.float64))
-            per_frame.append((cents[:, 0], cents[:, 1], dt))
+            per_frame.append((rows, cols, dt))
 
         return per_frame
 
