@@ -56,3 +56,11 @@ def test_aligner_carries_max_shift():
     from optomerge import Settings
     s = Settings.from_sources({"alignment": {"max_shift": 25.0}})
     assert s.build_aligner().max_shift == 25.0
+
+
+def test_aligner_carries_fit_scale_rotation():
+    from optomerge import PhaseCorrelationAligner, Settings
+    assert PhaseCorrelationAligner().fit_scale_rotation is True          # default
+    assert PhaseCorrelationAligner(fit_scale_rotation=False).fit_scale_rotation is False
+    s = Settings.from_sources({"alignment": {"fit_scale_rotation": False}})
+    assert s.build_aligner().fit_scale_rotation is False

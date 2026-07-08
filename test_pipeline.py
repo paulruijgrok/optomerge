@@ -72,6 +72,8 @@ _CLI_TO_FIELD = {
     "input": "input", "output": "output",
     "channel_order": "channel_order", "frames": "projection_frames",
     "bg_radius": "bg_radius", "use_scrub": "use_scrub", "upscale": "upscale",
+    "max_shift": "max_shift", "fit_scale_rotation": "fit_scale_rotation",
+    "align_method": "method", "deweight_stuck": "deweight_stuck",
     "verbose": "verbose", "dry_run": "dry_run",
 }
 
@@ -90,7 +92,9 @@ class StageResult:
     """Bundle of intermediate artifacts produced while stepping the pipeline."""
 
     def __init__(self) -> None:
-        self.data: Optional[np.ndarray] = None         # (H, W, N) raw
+        self.data: Optional[np.ndarray] = None         # (H, W, N) raw (merge only)
+        self.frame0: Optional[np.ndarray] = None       # first raw frame (for diagnostics)
+        self.n_frames: Optional[int] = None
         self.max_proj: Optional[np.ndarray] = None
         self.mean_proj: Optional[np.ndarray] = None
         self.layout: Optional[ChannelLayout] = None
@@ -110,14 +114,26 @@ def run_stages(
     out_dir: Path,
     stem: str,
     verbose: bool,
+    merge: bool = True,
+    max_shift: float = 0.0,
+    rgb_bitdepth: int = 8,
+    fit_scale_rotation: bool = True,
+    align_method: str = "phase",
+    feature_frames: int = 40,
+    feature_aligner=None,
 ) -> StageResult:
-    """Execute the pipeline stage by stage, saving a diagnostic after each."""
+    """Execute the pipeline stage by stage, saving a diagnostic after each.
+
+    With ``merge=False`` the full-movie load and the RGB merge are skipped, so
+    only the detection/alignment diagnostics are produced (fast).
+    """
     sr = StageResult()
 
     # ── 1. Load ───────────────────────────────────────────────────────────
     print("  [1/5] Loading ...")
     movie = RawMovie.open(src)
-    sr.data = movie.to_array()                       # (H, W, N)
+    sr.n_frames = movie.shape[-1]
+    sr.frame0 = movie.frame(0).data                  # one frame, for diagnostics
 
     # ── 2. Project ────────────────────────────────────────────────────────
     print("  [2/5] Projecting ...")
@@ -132,12 +148,27 @@ def run_stages(
     sr.layout = candidate.resolve(sr.max_proj, sr.mean_proj, verbose=verbose)
 
     # ── 4. Calibrate + fit alignment transforms ───────────────────────────
+    # Normalisation limits from the (median-despeckled) max projection, exactly
+    # as the pipeline does; alignment from the mean projection.
+    from optomerge.calibration import _compute_limits
+    sr.limits = _compute_limits(sr.layout, sr.max_proj, 0.0)
     proj_channels = {c.name: c.calibrate() for c in sr.layout.split(sr.mean_proj)}
-    sr.limits = {n: (c.vmin, c.vmax) for n, c in proj_channels.items()}
-    reference = next(c for c in proj_channels.values() if c.reference)
-    aligner = PhaseCorrelationAligner(use_scrub=use_scrub, upscale=upscale)
+    if align_method == "feature":
+        from optomerge import FeatureDistanceAligner
+        from optomerge.calibration import _sample_frame_stack
+        # Prefer the fully-configured aligner from settings (honours head_sigma,
+        # deweight_stuck, etc.); fall back to a max_shift-only default.
+        aligner = feature_aligner or FeatureDistanceAligner(
+            max_shift=max_shift if max_shift > 0 else 30.0)
+        frame_stack = _sample_frame_stack(movie, feature_frames, limit=projection_frames)
+        align_channels = {c.name: c for c in sr.layout.split(frame_stack)}
+    else:
+        aligner = PhaseCorrelationAligner(use_scrub=use_scrub, upscale=upscale,
+                                          max_shift=max_shift, fit_scale_rotation=fit_scale_rotation)
+        align_channels = proj_channels
+    reference = next(c for c in align_channels.values() if c.reference)
     for spec in sr.layout.moving_specs:
-        sr.transforms[spec.name] = aligner.align(reference, proj_channels[spec.name])
+        sr.transforms[spec.name] = aligner.align(reference, align_channels[spec.name])
 
     for name, t in sr.transforms.items():
         print(f"         {name}: t=({t.t1:.3f},{t.t2:.3f})  "
@@ -148,9 +179,21 @@ def run_stages(
         save_diag_segmentation(sr, out_dir, stem)
         save_diag_channels(sr, out_dir, stem)
         save_diag_alignment(sr, out_dir, stem)
+        if align_method == "feature":
+            ref_name = reference.name
+            mov_name = next(s.name for s in sr.layout.moving_specs)
+            save_diag_feature_detection(
+                aligner, align_channels[ref_name], align_channels[mov_name],
+                sr.transforms[mov_name], out_dir, stem,
+            )
+
+    if not merge:
+        print("  [skip merge] --no-merge: detection/alignment diagnostics only")
+        return sr
 
     # ── 5. Assemble aligned RGB movie ─────────────────────────────────────
     print("  [4/5] Aligning frames ...")
+    sr.data = movie.to_array()                       # (H, W, N) — full load
     channels = sr.layout.split(sr.data)
     for ch in channels:
         ch.vmin, ch.vmax = sr.limits[ch.name]
@@ -164,7 +207,7 @@ def run_stages(
     # ── 6. Save ───────────────────────────────────────────────────────────
     print("  [5/5] Saving ...")
     out_tif = out_dir / f"{stem}_aligned.tif"
-    rgb_movie.save(out_tif)
+    rgb_movie.save(out_tif, bit_depth=rgb_bitdepth)
     print(f"  Output folder: {out_dir}")
     return sr
 
@@ -221,7 +264,7 @@ def save_diag_segmentation(sr: StageResult, out_dir: Path, stem: str):
 
 def save_diag_channels(sr: StageResult, out_dir: Path, stem: str):
     """Diag 03 – cropped channels from frame 0."""
-    frame0 = sr.data[:, :, 0]
+    frame0 = sr.frame0
     channels = sr.layout.split(frame0)
     cmaps = {"green": "Greens_r", "red": "Reds_r"}
 
@@ -283,6 +326,82 @@ def save_diag_alignment(sr: StageResult, out_dir: Path, stem: str):
     plt.close(fig)
 
 
+def save_diag_feature_detection(aligner, ref_channel, mov_channel, transform,
+                                out_dir: Path, stem: str, n_show: int = 6):
+    """Diag 06 – what the feature aligner detected + where the fit lands the heads.
+
+    For a handful of the sampled frames, overlays on the green (reference) frame:
+    the filament mask outline, each detected red head centroid (red x), and that
+    head after registration (yellow o = centroid + fitted translation). A good
+    fit puts every yellow o on the filament outline. This is the per-frame view
+    behind the single mean-projection overlay in diag 04.
+    """
+    green = np.asarray(ref_channel.data, dtype=np.float64)
+    red = np.asarray(mov_channel.data, dtype=np.float64)
+    if green.ndim == 2:
+        green = green[:, :, None]
+        red = red[:, :, None]
+    n = green.shape[2]
+    if n == 0:
+        return
+    k_show = np.unique(np.linspace(0, n - 1, min(n_show, n)).astype(int))
+
+    ncol = min(3, len(k_show))
+    nrow = int(np.ceil(len(k_show) / ncol))
+    fig, axes = plt.subplots(nrow, ncol, figsize=(4 * ncol, 4 * nrow), squeeze=False)
+    for ax in axes.flat:
+        ax.axis("off")
+
+    cap = getattr(aligner, "distance_cap", np.inf)
+    try:
+        from scipy.ndimage import distance_transform_edt
+    except Exception:
+        distance_transform_edt = None
+
+    for ax, k in zip(axes.flat, k_show):
+        g = green[:, :, k]
+        rows, cols, fil = aligner.frame_features(g, red[:, :, k])
+        vmax = np.percentile(g, 99.5) if g.max() > 0 else 1.0
+        ax.imshow(g, cmap="gray", vmin=g.min(), vmax=vmax,
+                  aspect="auto", interpolation="nearest")
+        if fil.any():
+            ax.contour(fil.astype(float), levels=[0.5], colors="lime", linewidths=0.8)
+        n_in = 0
+        if rows.size:
+            # transform_image is an inverse warp: it moves a head by (-t2, -t1).
+            rr = rows - transform.t2
+            cc = cols - transform.t1
+            # Classify each registered head as inlier (on a filament, dist < cap)
+            # or orphan, mirroring the robust cost.
+            inlier = np.ones(rows.shape, dtype=bool)
+            if distance_transform_edt is not None and fil.any():
+                dt = distance_transform_edt(~fil)
+                ri = np.clip(np.round(rr).astype(int), 0, dt.shape[0] - 1)
+                ci = np.clip(np.round(cc).astype(int), 0, dt.shape[1] - 1)
+                inlier = dt[ri, ci] < cap
+            n_in = int(inlier.sum())
+            ax.plot(cols, rows, "x", color="red", markersize=6, mew=1.2,
+                    label="detected head")
+            if inlier.any():
+                ax.plot(cc[inlier], rr[inlier], "o", mfc="none", mec="yellow",
+                        markersize=9, mew=1.6, label="registered (on filament)")
+            if (~inlier).any():
+                ax.plot(cc[~inlier], rr[~inlier], "o", mfc="none", mec="deepskyblue",
+                        markersize=9, mew=1.2, label="orphan (ignored)")
+        ax.set_title(f"frame {k}: {rows.size} heads, {n_in} on filament", fontsize=8)
+
+    handles, labels = axes.flat[0].get_legend_handles_labels()
+    if handles:
+        fig.legend(handles, labels, loc="lower center", ncol=2, fontsize=8,
+                   framealpha=0.8, bbox_to_anchor=(0.5, -0.02))
+    fig.suptitle(f"{stem}\nfeature detection: green=filament outline, red x=detected head, "
+                 f"yellow o=on filament (used), blue o=orphan (ignored)  "
+                 f"t=({transform.t1:.2f},{transform.t2:.2f})", fontsize=9)
+    fig.tight_layout(rect=(0, 0.03, 1, 0.96))
+    fig.savefig(out_dir / f"{stem}_diag_06_feature_detection.png", dpi=150)
+    plt.close(fig)
+
+
 def save_diag_rgb_frame(sr: StageResult, out_dir: Path, stem: str):
     """Diag 05 – first frame of the aligned RGB output."""
     if sr.rgb is None:
@@ -311,6 +430,13 @@ def process_file(
     upscale: int,
     save_diag: bool,
     verbose: bool,
+    merge: bool = True,
+    max_shift: float = 0.0,
+    rgb_bitdepth: int = 8,
+    fit_scale_rotation: bool = True,
+    align_method: str = "phase",
+    feature_frames: int = 40,
+    feature_aligner=None,
 ) -> dict:
     """Run the full pipeline on *src*, saving outputs + diagnostics to *dst_dir*."""
     result = dict(src=str(src), success=False, duration=0.0,
@@ -321,9 +447,13 @@ def process_file(
         stem = src.stem
         sr = run_stages(
             src, channel_order, projection_frames, bg_radius,
-            use_scrub, upscale, save_diag, dst_dir, stem, verbose,
+            use_scrub, upscale, save_diag, dst_dir, stem, verbose, merge=merge,
+            max_shift=max_shift, rgb_bitdepth=rgb_bitdepth,
+            fit_scale_rotation=fit_scale_rotation,
+            align_method=align_method, feature_frames=feature_frames,
+            feature_aligner=feature_aligner,
         )
-        result["n_frames"] = sr.data.shape[2]
+        result["n_frames"] = sr.n_frames
         if sr.transforms:
             t = next(iter(sr.transforms.values()))
             result["alignment"] = {
@@ -369,6 +499,20 @@ def main():
                    help="Align on upsampled scrub images for sub-pixel accuracy")
     p.add_argument("--upscale", type=int, default=S, metavar="N",
                    help="Scrub upscaling factor when --use-scrub (default: 4)")
+    p.add_argument("--max-shift", type=float, default=S, metavar="PX", dest="max_shift",
+                   help="constrain alignment translation to +/- PX px (0 = unconstrained)")
+    p.add_argument("--no-rotation", action="store_const", const=False, default=S,
+                   dest="fit_scale_rotation",
+                   help="fit translation only (pin rotation/scale)")
+    p.add_argument("--align-method", default=S, choices=["phase", "feature"],
+                   dest="align_method",
+                   help="registration algorithm: phase (default) | feature "
+                        "(head-to-filament distance)")
+    p.add_argument("--feature", action="store_const", const="feature", default=S,
+                   dest="align_method", help="shorthand for --align-method feature")
+    p.add_argument("--deweight-stuck", action="store_true", default=S,
+                   dest="deweight_stuck",
+                   help="(feature) down-weight stuck objects (count once, not per-frame)")
     p.add_argument("--verbose", action="store_true", default=S,
                    help="Show detailed per-step progress")
     p.add_argument("--dry-run", action="store_true", default=S, dest="dry_run",
@@ -378,6 +522,8 @@ def main():
                    help="Process a single file instead of scanning --input")
     p.add_argument("--no-diag", action="store_true",
                    help="Skip saving diagnostic PNG images")
+    p.add_argument("--no-merge", action="store_true",
+                   help="Skip the full-movie RGB merge; detection/alignment diagnostics only (fast)")
     args = p.parse_args()
 
     # Resolution order: built-in defaults -> config file(s) -> explicit CLI flags.
@@ -428,7 +574,9 @@ def main():
     print(f"  Config: {', '.join(args.config) if args.config else '(built-in defaults)'}")
     print(f"  Channel order: {settings.channels.channel_order}   "
           f"BG radius: {settings.processing.bg_radius}")
-    print(f"  Aligner: phase-correlation"
+    _aligner_desc = ("feature (head-to-filament distance)"
+                     if settings.alignment.method == "feature" else "phase-correlation")
+    print(f"  Aligner: {_aligner_desc}"
           + (f" (scrub x{settings.alignment.upscale})" if settings.alignment.use_scrub else ""))
     print(f"  Diag images: {'no' if args.no_diag else 'yes'}")
     print("=" * 68)
@@ -449,6 +597,13 @@ def main():
             bg_radius=settings.processing.bg_radius,
             use_scrub=settings.alignment.use_scrub, upscale=settings.alignment.upscale,
             save_diag=not args.no_diag, verbose=settings.runtime.verbose,
+            merge=not args.no_merge, max_shift=settings.alignment.max_shift,
+            rgb_bitdepth=settings.io.rgb_bitdepth,
+            fit_scale_rotation=settings.alignment.fit_scale_rotation,
+            align_method=settings.alignment.method,
+            feature_frames=settings.alignment.feature_frames,
+            feature_aligner=(settings.build_aligner()
+                             if settings.alignment.method == "feature" else None),
         )
         results.append(result)
         mins, secs = divmod(int(result["duration"]), 60)

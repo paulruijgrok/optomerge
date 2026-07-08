@@ -22,7 +22,18 @@ if TYPE_CHECKING:
 
 
 class Aligner(ABC):
-    """Strategy that computes a :class:`Transform` mapping ``moving`` -> ``reference``."""
+    """Strategy that computes a :class:`Transform` mapping ``moving`` -> ``reference``.
+
+    ``needs_frames`` declares what the calibrator should hand to :meth:`align`.
+    The default (``False``) means the aligner works on the channel *projection*
+    crops (a single 2-D image per channel), as phase correlation does. An aligner
+    that sets ``needs_frames = True`` is instead given channels whose ``data`` is
+    a ``(h, w, n)`` stack of sampled raw frames, so it can reason per frame (e.g.
+    the feature-distance aligner, which needs each frame's head positions).
+    """
+
+    #: Whether :meth:`align` wants per-frame stacks (True) or projections (False).
+    needs_frames: bool = False
 
     @abstractmethod
     def align(self, reference: "Channel", moving: "Channel") -> Transform:
@@ -62,6 +73,7 @@ class PhaseCorrelationAligner(Aligner):
         use_scrub: bool = False,
         upscale: int = 4,
         max_shift: float = 0.0,
+        fit_scale_rotation: bool = True,
     ) -> None:
         self.init_rot = init_rot
         self.init_s1 = init_s1
@@ -69,6 +81,7 @@ class PhaseCorrelationAligner(Aligner):
         self.use_scrub = use_scrub
         self.upscale = upscale
         self.max_shift = max_shift
+        self.fit_scale_rotation = fit_scale_rotation
 
     def align(self, reference: "Channel", moving: "Channel") -> Transform:
         if self.use_scrub:
@@ -82,7 +95,7 @@ class PhaseCorrelationAligner(Aligner):
 
         t1, t2, rot, s1, s2, score = calculate_alignment(
             ref_img, mov_img, self.init_rot, self.init_s1, self.init_s2,
-            max_shift=max_shift,
+            max_shift=max_shift, fit_scale_rotation=self.fit_scale_rotation,
         )
         transform = Transform(t1=t1, t2=t2, rot=rot, s1=s1, s2=s2, score=score)
 

@@ -31,6 +31,9 @@ class IOSettings:
     suffix: str = "_aligned"
     #: Overwrite existing output files instead of skipping them.
     overwrite: bool = False
+    #: RGB output bit depth: 8 (default; compact, fixed-range display, like the
+    #: MATLAB reference) or 16 (more dynamic range, auto-contrasted in ImageJ).
+    rgb_bitdepth: int = 8
 
 
 @dataclass
@@ -47,6 +50,34 @@ class ChannelSettings:
 
 @dataclass
 class AlignmentSettings:
+    #: Registration algorithm: "phase" (default; FFT phase correlation, general
+    #: purpose) or "feature" (head-to-filament distance minimisation, tailored to
+    #: point-vs-line OptoSplit channels -- see FeatureDistanceAligner).
+    method: str = "phase"
+    #: Sampled raw frames used by the "feature" aligner (spread across the movie).
+    feature_frames: int = 60
+    #: "feature" head threshold, in std-devs above the moving channel's per-frame mean.
+    head_sigma: float = 3.0
+    #: "feature" filament threshold, in std-devs above the reference channel's mean.
+    filament_sigma: float = 2.0
+    #: "feature" head blob area gate (pixels): keep blobs within [min, max]; the
+    #: upper bound rejects filament crossings / bleed that aren't point-like heads.
+    head_min_area: int = 4
+    head_max_area: int = 60
+    #: "feature" filament despeckle: drop mask components smaller than this (pixels)
+    #: so background noise is not treated as filament.
+    filament_min_area: int = 20
+    #: "feature" robustness cap (pixels): a head farther than this from any filament
+    #: is treated as an orphan (red-only object / undetected filament) and cannot
+    #: bias the fit. Also the inlier threshold for the reported score.
+    distance_cap: float = 6.0
+    #: "feature" down-weight stuck objects: weight each head by 1/persistence so a
+    #: long-lived (stuck) object counts once, not once-per-frame. Restores field
+    #: coverage when a few stuck objects would otherwise dominate the fit.
+    deweight_stuck: bool = False
+    #: "feature" radius (pixels) within which detections in different frames are
+    #: treated as the same stuck object for the persistence count.
+    stuck_radius: float = 2.0
     #: Align on upsampled scrub images for sub-pixel accuracy.
     use_scrub: bool = False
     #: Scrub-image upscaling factor when ``use_scrub`` is set.
@@ -58,6 +89,10 @@ class AlignmentSettings:
     #: If > 0, constrain the fitted translation to ±max_shift px of the origin,
     #: ignoring spurious far-off correlation peaks. 0 = unconstrained.
     max_shift: float = 0.0
+    #: Search for inter-channel rotation + scale (True) or fit translation only
+    #: (False). For fixed optics (OptoSplit) a free rotation/scale search tends
+    #: to over-fit; translation-only is often more stable.
+    fit_scale_rotation: bool = True
 
 
 @dataclass
@@ -67,6 +102,14 @@ class ProcessingSettings:
     #: Frames held in memory / processed per block (the FrameBunch granularity).
     #: Small keeps memory bounded; ~100 mirrors the MATLAB reference.
     bunch_size: int = 100
+    #: Projection used for per-channel normalisation limits: "max" (default;
+    #: tracks per-frame peaks so moving filaments don't saturate) or "mean".
+    #: The projection is median-filtered first to remove cosmic rays.
+    norm_projection: str = "max"
+    #: Extra percentile fraction excluded at each end when setting the limits.
+    #: 0 = plain min/max after median-despeckle (keeps sparse features like heads);
+    #: raise only if a channel still has outliers the median missed.
+    norm_exclude: float = 0.0
 
 
 @dataclass
@@ -231,11 +274,23 @@ class Settings:
 
     def build_aligner(self):
         """Construct the :class:`Aligner` this config describes."""
-        from .registration import PhaseCorrelationAligner
         a = self.alignment
+        if a.method == "feature":
+            from .feature_registration import FeatureDistanceAligner
+            # The feature aligner needs a bounded search; default to 30 px when
+            # max_shift is left at its "unconstrained" sentinel of 0.
+            return FeatureDistanceAligner(
+                max_shift=a.max_shift if a.max_shift > 0 else 30.0,
+                head_sigma=a.head_sigma, filament_sigma=a.filament_sigma,
+                min_head_area=a.head_min_area, max_head_area=a.head_max_area,
+                filament_min_area=a.filament_min_area, distance_cap=a.distance_cap,
+                deweight_stuck=a.deweight_stuck, stuck_radius=a.stuck_radius,
+            )
+        from .registration import PhaseCorrelationAligner
         return PhaseCorrelationAligner(
             init_rot=a.init_rot, init_s1=a.init_s1, init_s2=a.init_s2,
             use_scrub=a.use_scrub, upscale=a.upscale, max_shift=a.max_shift,
+            fit_scale_rotation=a.fit_scale_rotation,
         )
 
     def build_acceptance(self):
@@ -264,16 +319,21 @@ class Settings:
         aligner = self.build_aligner()
         criteria = self.build_acceptance()
         c = self.calibration
+        norm_from_max = self.processing.norm_projection == "max"
+        norm_exclude = self.processing.norm_exclude
         if c.mode == "robust":
             return RobustCalibrator(
                 layout=layout, aligner=aligner, criteria=criteria,
                 chunk_size=c.chunk_size, min_candidates=c.min_candidates,
                 max_trials=c.max_trials, verbose=self.runtime.verbose,
+                norm_from_max=norm_from_max, norm_exclude=norm_exclude,
             )
         return SingleProjectionCalibrator(
             layout=layout, aligner=aligner,
             projection_frames=self.channels.projection_frames,
             criteria=criteria, verbose=self.runtime.verbose,
+            norm_from_max=norm_from_max, norm_exclude=norm_exclude,
+            feature_frames=self.alignment.feature_frames,
         )
 
     def to_pipeline_kwargs(self) -> Dict[str, Any]:

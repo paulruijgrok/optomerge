@@ -26,6 +26,8 @@ Options
     --output DIR    Output directory                        (default: output_temp)
     --suffix STR    Suffix inserted before the extension    (default: _aligned)
     --overwrite     Overwrite existing output files
+    --rgb-bits 8|16 RGB output bit depth (default: 8; 8-bit is compact and shown
+                    at a fixed 0-255 range, 16-bit auto-contrasts in ImageJ)
     --channel-order STR
                     auto (default) |
                     top_green_fils_bottom_red_heads |
@@ -121,10 +123,14 @@ _CHANNEL_ORDERS = (
 # thus override the config file (unset flags keep the file/default value).
 _CLI_TO_FIELD = {
     "input": "input", "output": "output", "suffix": "suffix", "overwrite": "overwrite",
+    "rgb_bits": "rgb_bitdepth",
     "channel_order": "channel_order", "frames": "projection_frames",
     "segmentation": "segmentation",
     "bg_radius": "bg_radius", "bunch_size": "bunch_size",
+    "norm_projection": "norm_projection",
     "use_scrub": "use_scrub", "upscale": "upscale", "max_shift": "max_shift",
+    "fit_scale_rotation": "fit_scale_rotation", "align_method": "method",
+    "deweight_stuck": "deweight_stuck",
     "calibration_mode": "mode",
     "group_by": "by", "group_token": "token_pattern",
     "reuse_alignment": "reuse_alignment", "verbose": "verbose", "dry_run": "dry_run",
@@ -181,6 +187,9 @@ def process_file(
     verbose: bool,
     logger: logging.Logger,
     shared: "Calibration | None" = None,
+    norm_from_max: bool = True,
+    norm_exclude: float = 0.0,
+    rgb_bitdepth: int = 8,
 ) -> dict:
     """Calibrate, gate on acceptance, then merge one file.
 
@@ -198,11 +207,12 @@ def process_file(
     t0 = time.perf_counter()
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)
-        active = (ConservedCalibrator(shared, projection_frames=projection_frames)
+        active = (ConservedCalibrator(shared, projection_frames=projection_frames,
+                                      norm_from_max=norm_from_max, norm_exclude=norm_exclude)
                   if shared is not None else calibrator)
         pipe = MergePipeline(source=src, calibrator=active, bunch_size=bunch_size,
                              bg_radius=bg_radius, projection_frames=projection_frames,
-                             verbose=verbose)
+                             verbose=verbose, rgb_bitdepth=rgb_bitdepth)
 
         movie = RawMovie.open(src)
         try:
@@ -276,6 +286,8 @@ def main() -> None:
     parser.add_argument("--output", default=S, metavar="DIR")
     parser.add_argument("--suffix", default=S, metavar="STR")
     parser.add_argument("--overwrite", action="store_true", default=S)
+    parser.add_argument("--rgb-bits", type=int, default=S, choices=[8, 16], dest="rgb_bits",
+                        help="RGB output bit depth (default: 8)")
     parser.add_argument("--channel-order", default=S, choices=_CHANNEL_ORDERS,
                         dest="channel_order", metavar="STR")
     parser.add_argument("--frames", type=int, default=S, metavar="N",
@@ -283,11 +295,27 @@ def main() -> None:
     parser.add_argument("--segmentation", default=S, choices=["row_profile", "line_search"],
                         metavar="STR", help="channel-finding method (default: row_profile)")
     parser.add_argument("--bg-radius", type=int, default=S, metavar="N", dest="bg_radius")
+    parser.add_argument("--norm-projection", default=S, choices=["max", "mean"],
+                        dest="norm_projection", metavar="STR",
+                        help="projection for normalisation limits (default: max)")
     parser.add_argument("--bunch-size", type=int, default=S, metavar="N", dest="bunch_size")
     parser.add_argument("--use-scrub", action="store_true", default=S, dest="use_scrub")
     parser.add_argument("--upscale", type=int, default=S, metavar="N")
     parser.add_argument("--max-shift", type=float, default=S, metavar="PX", dest="max_shift",
                         help="constrain alignment translation to +/- PX px (0 = unconstrained)")
+    parser.add_argument("--no-rotation", action="store_const", const=False, default=S,
+                        dest="fit_scale_rotation",
+                        help="fit translation only (pin rotation/scale; avoids over-fitting)")
+    parser.add_argument("--align-method", default=S, choices=["phase", "feature"],
+                        dest="align_method",
+                        help="registration algorithm: phase (default) | feature "
+                             "(head-to-filament distance, for point-vs-line channels)")
+    parser.add_argument("--feature", action="store_const", const="feature", default=S,
+                        dest="align_method",
+                        help="shorthand for --align-method feature")
+    parser.add_argument("--deweight-stuck", action="store_true", default=S,
+                        dest="deweight_stuck",
+                        help="(feature) down-weight stuck objects (count once, not per-frame)")
     parser.add_argument("--robust", action="store_const", const="robust", default=S,
                         dest="calibration_mode",
                         help="use the robust best-of-N calibrator")
@@ -393,6 +421,9 @@ def main() -> None:
             bg_radius=settings.processing.bg_radius,
             projection_frames=settings.channels.projection_frames,
             verbose=settings.runtime.verbose, logger=logger,
+            norm_from_max=settings.processing.norm_projection == "max",
+            norm_exclude=settings.processing.norm_exclude,
+            rgb_bitdepth=settings.io.rgb_bitdepth,
         )
 
     results: list[dict] = []

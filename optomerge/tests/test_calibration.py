@@ -44,7 +44,7 @@ class _Chan:
         self.vmin = None
         self.vmax = None
 
-    def calibrate(self):
+    def calibrate(self, exclude_fraction=0.0):
         # Limits derive from the movie data, so conserved reuse can be shown to
         # recompute them per movie.
         self.vmin, self.vmax = 0.0, self.value
@@ -117,6 +117,19 @@ def test_single_projection_returns_calibration():
     assert set(cal.transforms) == {"red"}
     assert set(cal.limits) == {"green", "red"}
     assert np.isfinite(cal.score)
+
+
+def test_norm_limits_from_max_projection():
+    # Max-projection limits give a higher vmax than mean-projection limits
+    # (mean blurs moving objects), so per-frame peaks aren't clipped/saturated.
+    movie = _movie(50)
+    lim_max = SingleProjectionCalibrator(
+        layout=_Layout(_good_specs()), aligner=_ScriptedAligner([0.08]),
+        norm_from_max=True).calibrate(movie).limits["green"][1]
+    lim_mean = SingleProjectionCalibrator(
+        layout=_Layout(_good_specs()), aligner=_ScriptedAligner([0.08]),
+        norm_from_max=False).calibrate(movie).limits["green"][1]
+    assert lim_max > lim_mean
 
 
 def test_single_projection_flags_rejected_without_raising():

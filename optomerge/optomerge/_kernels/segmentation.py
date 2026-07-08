@@ -285,10 +285,18 @@ def _find_bounds_row_profile(
     channel_order: str,
     trim_frac: float = 0.2,
     gap_search_frac: float = 0.4,
+    extent_clip_pct: float = 99.5,
     pixel_ratio: float = 3.0,
     verbose: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray], Optional[np.ndarray]]:
     """Detect one or two channels from row/column intensity profiles.
+
+    The gap between the two channels is found on the smooth *mean* projection.
+    The per-channel *extent* (tight top/bottom/left/right bounds) is measured on
+    the *max* projection instead -- a row/column is "lit" if it has signal in
+    any frame -- after clipping the brightest ``extent_clip_pct`` percentile so a
+    cosmic ray / hot pixel (which the max projection accumulates over all frames)
+    cannot make a dark row look occupied.
 
     Returns ``(bounds1, scrub1, bounds2, scrub2)`` in the same convention as
     :func:`find_channel_bounds` (channel 1 = green/bright).
@@ -296,6 +304,11 @@ def _find_bounds_row_profile(
     H, W = mean_proj.shape
     row_prof = mean_proj.mean(axis=1)
     split, smoothed = _find_split(row_prof, H, gap_search_frac)
+
+    # Hot-pixel-robust max projection used for measuring channel extent.
+    clip_val = np.percentile(max_proj, extent_clip_pct)
+    robust_max = np.minimum(np.asarray(max_proj, dtype=np.float64), clip_val)
+    row_ext = robust_max.mean(axis=1)
 
     # -- one vs two channels --
     if channel_order in ("top_green_fils_bottom_red_heads",
@@ -313,9 +326,10 @@ def _find_bounds_row_profile(
                   f"(split row {split}).")
 
     def _band(lo, hi):
-        r0, r1 = _band_extent(row_prof, lo, hi, trim_frac)
-        col_prof = mean_proj[r0:r1 + 1, :].mean(axis=0)
-        c0, c1 = _band_extent(col_prof, 0, W - 1, trim_frac)
+        # Row/column extent from the hot-pixel-robust max projection.
+        r0, r1 = _band_extent(row_ext, lo, hi, trim_frac)
+        col_ext = robust_max[r0:r1 + 1, :].mean(axis=0)
+        c0, c1 = _band_extent(col_ext, 0, W - 1, trim_frac)
         return np.array([[r0, r1], [c0, c1]]), _rect_scrub(r0, r1, c0, c1, W, H)
 
     if num_channels == 1:

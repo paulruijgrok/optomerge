@@ -53,25 +53,75 @@ class Calibration:
     image_shape: Optional[tuple] = None
 
 
+def _despeckle(image: np.ndarray, size: int = 3) -> np.ndarray:
+    """Spatial median filter to remove isolated cosmic rays / hot pixels.
+
+    Unlike a percentile clip, a 3x3 median removes lone bright pixels but keeps
+    multi-pixel features (e.g. sparse point-like "heads"), so ``vmax`` reflects
+    real signal rather than being pulled down by clipping sparse channels.
+    """
+    try:
+        from scipy.ndimage import median_filter
+        return median_filter(np.asarray(image, dtype=np.float64), size=size)
+    except Exception:  # pragma: no cover - scipy always present in practice
+        return np.asarray(image, dtype=np.float64)
+
+
+def _compute_limits(
+    resolved_layout: ChannelLayout,
+    limit_source: np.ndarray,
+    norm_exclude: float,
+) -> Dict[str, Tuple[float, float]]:
+    """Per-channel (vmin, vmax) intensity limits from a projection.
+
+    The projection is median-filtered first (removes cosmic rays without
+    clipping sparse real features), then ``vmin``/``vmax`` are the min/max --
+    or, if ``norm_exclude > 0``, the corresponding percentiles.
+    """
+    despeckled = _despeckle(limit_source)
+    chans = {c.name: c.calibrate(exclude_fraction=norm_exclude)
+             for c in resolved_layout.split(despeckled)}
+    return {name: (c.vmin, c.vmax) for name, c in chans.items()}
+
+
 def _build_calibration(
     resolved_layout: ChannelLayout,
+    max_proj: np.ndarray,
     mean_proj: np.ndarray,
     aligner: Aligner,
     criteria: Optional[AcceptanceCriteria],
     gate: bool,
+    norm_from_max: bool = True,
+    norm_exclude: float = 0.0,
+    frame_stack: Optional[np.ndarray] = None,
 ) -> Calibration:
-    """Fit transforms on a projection and package a :class:`Calibration`.
+    """Fit transforms and package a :class:`Calibration`.
+
+    Normalisation limits are taken from the **max** projection (``norm_from_max``)
+    so per-frame filament peaks are not clipped -- the mean projection blurs
+    moving objects and yields too-low a ``vmax``, saturating the output. The
+    *alignment* still uses the mean projection (smoother, better registration).
 
     ``gate`` controls whether acceptance failure sets ``accepted = False``
     (robust filtering) or is only recorded as a score (single-projection).
+
+    If the aligner declares ``needs_frames`` and a ``frame_stack`` ``(H, W, n)``
+    of sampled raw frames is supplied, alignment is run on per-frame channel
+    stacks rather than the mean projection (see :class:`FeatureDistanceAligner`).
     """
-    proj_channels = {c.name: c.calibrate() for c in resolved_layout.split(mean_proj)}
-    limits = {name: (c.vmin, c.vmax) for name, c in proj_channels.items()}
-    reference = next(c for c in proj_channels.values() if c.reference)
+    limit_source = max_proj if norm_from_max else mean_proj
+    limits = _compute_limits(resolved_layout, limit_source, norm_exclude)
+
+    if getattr(aligner, "needs_frames", False) and frame_stack is not None:
+        # Per-frame aligner: hand it raw channel stacks (it reads .data directly).
+        align_channels = {c.name: c for c in resolved_layout.split(frame_stack)}
+    else:
+        align_channels = {c.name: c.calibrate() for c in resolved_layout.split(mean_proj)}
+    reference = next(c for c in align_channels.values() if c.reference)
 
     transforms: Dict[str, "Transform"] = {}
     for spec in resolved_layout.moving_specs:
-        transforms[spec.name] = aligner.align(reference, proj_channels[spec.name])
+        transforms[spec.name] = aligner.align(reference, align_channels[spec.name])
 
     result = evaluate(resolved_layout.specs, transforms, mean_proj.shape,
                       criteria or AcceptanceCriteria())
@@ -84,6 +134,24 @@ def _build_calibration(
         reasons=result.reasons if gate else [],
         image_shape=tuple(mean_proj.shape),
     )
+
+
+def _sample_frame_stack(movie: "RawMovie", n_sample: int,
+                        limit: Optional[int] = None) -> np.ndarray:
+    """Evenly sample up to ``n_sample`` raw frames into an ``(H, W, k)`` stack.
+
+    Used to feed per-frame aligners without realising the whole movie. Sampling
+    is spread across the (optionally ``limit``-capped) movie so the frames span
+    the object's motion, which is what makes the head/filament geometry
+    informative.
+    """
+    n_total = len(movie)
+    if limit is not None:
+        n_total = min(n_total, limit)
+    k = min(n_sample, n_total)
+    idx = np.unique(np.linspace(0, n_total - 1, k).astype(int))
+    frames = [np.asarray(movie.frame(int(i)).data, dtype=np.float64) for i in idx]
+    return np.stack(frames, axis=2)
 
 
 class Calibrator(ABC):
@@ -119,19 +187,32 @@ class SingleProjectionCalibrator(Calibrator):
         projection_frames: Optional[int] = None,
         criteria: Optional[AcceptanceCriteria] = None,
         verbose: bool = False,
+        norm_from_max: bool = True,
+        norm_exclude: float = 0.0,
+        feature_frames: int = 40,
     ) -> None:
         self.layout = layout or ChannelLayout.auto()
         self.aligner = aligner or PhaseCorrelationAligner()
         self.projection_frames = projection_frames
         self.criteria = criteria
         self.verbose = verbose
+        self.norm_from_max = norm_from_max
+        self.norm_exclude = norm_exclude
+        self.feature_frames = feature_frames
 
     def calibrate(self, movie: "RawMovie") -> Calibration:
         max_proj = movie.max_projection(self.projection_frames)
         mean_proj = movie.mean_projection(self.projection_frames)
         resolved = self.layout.resolve(max_proj, mean_proj, verbose=self.verbose)
-        return _build_calibration(resolved, mean_proj, self.aligner,
-                                  self.criteria, gate=self.criteria is not None)
+        frame_stack = None
+        if getattr(self.aligner, "needs_frames", False):
+            frame_stack = _sample_frame_stack(movie, self.feature_frames,
+                                              limit=self.projection_frames)
+        return _build_calibration(resolved, max_proj, mean_proj, self.aligner,
+                                  self.criteria, gate=self.criteria is not None,
+                                  norm_from_max=self.norm_from_max,
+                                  norm_exclude=self.norm_exclude,
+                                  frame_stack=frame_stack)
 
 
 class ConservedCalibrator(Calibrator):
@@ -143,15 +224,18 @@ class ConservedCalibrator(Calibrator):
     the OO home of ``alignRGB.m``'s ``keepAlignment`` behaviour.
     """
 
-    def __init__(self, reference: Calibration, projection_frames: Optional[int] = None) -> None:
+    def __init__(self, reference: Calibration, projection_frames: Optional[int] = None,
+                 norm_from_max: bool = True, norm_exclude: float = 0.0) -> None:
         self.reference = reference
         self.projection_frames = projection_frames
+        self.norm_from_max = norm_from_max
+        self.norm_exclude = norm_exclude
 
     def calibrate(self, movie: "RawMovie") -> Calibration:
         layout = self.reference.resolved_layout
-        mean_proj = movie.mean_projection(self.projection_frames)
-        proj_channels = {c.name: c.calibrate() for c in layout.split(mean_proj)}
-        limits = {name: (c.vmin, c.vmax) for name, c in proj_channels.items()}
+        limit_source = (movie.max_projection(self.projection_frames) if self.norm_from_max
+                        else movie.mean_projection(self.projection_frames))
+        limits = _compute_limits(layout, limit_source, self.norm_exclude)
         return Calibration(
             resolved_layout=layout,
             transforms=dict(self.reference.transforms),
@@ -159,7 +243,7 @@ class ConservedCalibrator(Calibrator):
             score=self.reference.score,
             accepted=True,
             reasons=[],
-            image_shape=tuple(mean_proj.shape),
+            image_shape=tuple(limit_source.shape),
         )
 
 
@@ -195,6 +279,8 @@ class RobustCalibrator(Calibrator):
         min_candidates: int = 10,
         max_trials: int = 30,
         verbose: bool = False,
+        norm_from_max: bool = True,
+        norm_exclude: float = 0.0,
     ) -> None:
         self.layout = layout or ChannelLayout.auto()
         self.aligner = aligner or PhaseCorrelationAligner()
@@ -203,6 +289,8 @@ class RobustCalibrator(Calibrator):
         self.min_candidates = min_candidates
         self.max_trials = max_trials
         self.verbose = verbose
+        self.norm_from_max = norm_from_max
+        self.norm_exclude = norm_exclude
 
     def _log(self, msg: str) -> None:
         if self.verbose:
@@ -218,6 +306,7 @@ class RobustCalibrator(Calibrator):
             single = SingleProjectionCalibrator(
                 self.layout, self.aligner, projection_frames=None,
                 criteria=self.criteria, verbose=self.verbose,
+                norm_from_max=self.norm_from_max, norm_exclude=self.norm_exclude,
             ).calibrate(movie)
             if not single.accepted:
                 raise AlignmentNotFoundError(
@@ -238,8 +327,10 @@ class RobustCalibrator(Calibrator):
                 max_proj = bunch.max_projection()
                 mean_proj = bunch.mean_projection()
                 resolved = self.layout.resolve(max_proj, mean_proj, verbose=False)
-                cal = _build_calibration(resolved, mean_proj, self.aligner,
-                                         self.criteria, gate=True)
+                cal = _build_calibration(resolved, max_proj, mean_proj, self.aligner,
+                                         self.criteria, gate=True,
+                                         norm_from_max=self.norm_from_max,
+                                         norm_exclude=self.norm_exclude)
             except Exception as exc:  # a bad block shouldn't sink the movie
                 self._log(f"  block @{bunch.start_index}: skipped ({exc})")
                 continue  # counts as a trial (guards against an all-bad movie)

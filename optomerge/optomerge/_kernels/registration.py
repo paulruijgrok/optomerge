@@ -45,6 +45,7 @@ def calculate_alignment(
     init_s1: float = 1.0,
     init_s2: float = 1.0,
     max_shift: float = 0.0,
+    fit_scale_rotation: bool = True,
 ) -> Tuple[float, float, float, float, float, float]:
     """Calculate the affine alignment between two images.
 
@@ -73,6 +74,13 @@ def calculate_alignment(
         far-off correlation peak cannot win. Use when the true inter-channel
         shift is known to be small (e.g. two halves of one camera frame).
         Default 0 = unconstrained (exact MATLAB behaviour).
+    fit_scale_rotation : bool, optional
+        If True (default), search for the rotation + anisotropic scale that
+        maximise the phase-correlation score. If False, hold rotation/scale at
+        the ``init_*`` values and fit translation only -- appropriate when the
+        inter-channel rotation/scale is a fixed, near-identity optical property
+        (e.g. an OptoSplit), where a free search tends to over-fit and invent a
+        spurious rotation.
 
     Returns
     -------
@@ -87,9 +95,16 @@ def calculate_alignment(
         np.asarray(im1, dtype=np.float64),
         np.asarray(im2, dtype=np.float64),
     )
-    rot, s1, s2, t1, t2, best_score = _calc_scale_rotation(
-        nim1, nim2, init_rot, init_s1, init_s2, max_shift=max_shift
-    )
+    if fit_scale_rotation:
+        rot, s1, s2, t1, t2, best_score = _calc_scale_rotation(
+            nim1, nim2, init_rot, init_s1, init_s2, max_shift=max_shift
+        )
+    else:
+        # Translation only, at the initial rotation/scale.
+        warped = transform_image(nim2, init_rot, init_s1, init_s2)
+        best_score, offset = _calc_fft2d_align(nim1, warped, max_shift=max_shift)
+        t2, t1 = -offset[0], -offset[1]
+        rot, s1, s2 = init_rot, init_s1, init_s2
     return t1, t2, rot, s1, s2, best_score
 
 

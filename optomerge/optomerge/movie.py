@@ -133,9 +133,13 @@ class Movie(ABC):
 
     # -- output ------------------------------------------------------------ #
 
-    def save(self, path: str | Path, writer: Optional[MovieWriter] = None) -> None:
-        """Serialise via an explicit writer, or one chosen by extension."""
-        writer = writer or MovieWriter.for_path(path)
+    def save(self, path: str | Path, writer: Optional[MovieWriter] = None,
+             bit_depth: int = 8) -> None:
+        """Serialise via an explicit writer, or one chosen by extension.
+
+        ``bit_depth`` (8 or 16) is passed to the default writer for RGB TIFFs.
+        """
+        writer = writer or MovieWriter.for_path(path, bit_depth=bit_depth)
         writer.write(self, path)
 
 

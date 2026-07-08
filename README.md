@@ -22,7 +22,8 @@ python run_optomerge.py                      # process everything under test_dat
 
 Expected output: an aligned RGB TIFF for each input movie, written under
 `output_temp/` with the input folder structure mirrored and `_aligned` appended
-to each filename, plus a `run_log.txt` summarising the batch. Use
+to each filename, plus a `run_log.txt` summarising the batch. Output is 8-bit RGB
+by default (compact, fixed 0–255 display; `--rgb-bits 16` for 16-bit). Use
 `python run_optomerge.py --dry-run` first to see what would be processed.
 
 ## Installation
@@ -143,6 +144,48 @@ python run_optomerge.py --reuse-alignment "good_movie.tif" --max-shift 30
 
 Sets are partitioned by `--group-by run|token|folder`; intensity normalisation
 is always recomputed per movie, so only the geometric alignment is shared.
+
+### Feature-distance registration (point-vs-line channels)
+
+Phase correlation aligns two images by their shared texture, which is weak when
+the channels image *different-looking* structures — a point-like "head" in one
+and a line-like filament in the other. On that kind of data the correlation peak
+is easily captured by noise, giving a "seeing-double" residual that no frame
+count or peak constraint fully removes.
+
+The `feature` method targets exactly this case. When the head and filament are
+one physical object that co-moves (the head sits on the filament in every frame,
+at a tip or along its length), the registration can be found geometrically:
+detect the head centroids in the moving channel and the filament mask in the
+reference channel per frame, then find the translation that minimises the total
+head-to-filament distance. Because the head is *on* the filament in every frame,
+that distance goes to zero at the correct registration regardless of where along
+the filament the head sits.
+
+```bash
+# translation-only head-to-filament registration, 40 sampled frames, ±30 px search
+python run_optomerge.py --feature --max-shift 30 --channel-order top_green_fils_bottom_red_heads
+```
+
+Detection is deliberately simple (thresholding + connected components, with the
+filament mask despeckled and head blobs area-gated). Tune it in the `[alignment]`
+config section: `head_sigma` / `filament_sigma` (thresholds in std-devs above each
+channel's mean), `head_min_area` / `head_max_area` (keep only point-like head
+blobs), `filament_min_area` (drop background speckle from the filament mask), and
+`feature_frames` (how many frames to sample — raise it for sparse or dim movies).
+Two robustness options handle awkward data: `distance_cap` clips the distance of
+"orphan" heads (red-only objects, or filaments too faint to detect) so they can't
+bias the fit, and `deweight_stuck` weights each head by `1/persistence` so a few
+long-stuck objects can't dominate the field (they'd otherwise be counted once per
+frame).
+The `--feature` diagnostic run writes `diag_06`, a per-frame overlay of the
+detected heads and filament outline, for exactly this tuning.
+
+See [docs/feature_registration.md](docs/feature_registration.md) for the full
+algorithm, parameter reference, and the roadmap (constrained rotation/scale next,
+plus general-purpose aligners for the wider OptoSplit community). This is the first tailored algorithm behind the `Aligner` seam;
+it is opt-in and does not change the default `phase` behaviour. Current scope:
+translation only — rotation/scale and richer detectors are future work.
 
 ### Configuration & run provenance
 
