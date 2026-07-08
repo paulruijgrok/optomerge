@@ -22,7 +22,7 @@ Usage
     python diagnose_segmentation.py --file "movie.tif" \\
         --channel-order top_green_fils_bottom_red_heads --frames 200
 
-Requires matplotlib (``pip install -e "optomerge/[dev]"``).
+Requires matplotlib (``pip install -e ".[dev]"``).
 """
 
 from __future__ import annotations
@@ -39,9 +39,6 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
 _here = Path(__file__).resolve().parent
-_pkg = _here / "optomerge"
-if _pkg.is_dir() and str(_pkg) not in sys.path:
-    sys.path.insert(0, str(_pkg))
 
 try:
     from optomerge import RawMovie
@@ -50,7 +47,7 @@ try:
         find_channel_bounds,
     )
 except ImportError as exc:
-    sys.exit(f"Cannot import optomerge ({exc}). Install with: pip install -e 'optomerge/[dev]'")
+    sys.exit(f"Cannot import optomerge ({exc}). Install with (from the repo root): pip install -e '.[dev]'")
 
 _CHANNEL_ORDERS = (
     "auto",

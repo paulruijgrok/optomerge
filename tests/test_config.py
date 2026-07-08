@@ -92,7 +92,7 @@ def test_toml_roundtrip(tmp_path):
 
 @pytest.mark.skipif(not _has_toml_reader(), reason="no TOML reader (install tomli on Python < 3.11)")
 def test_shipped_example_toml_loads():
-    example = Path(__file__).resolve().parents[2] / "optomerge.example.toml"
+    example = Path(__file__).resolve().parents[1] / "optomerge.example.toml"
     if not example.exists():
         pytest.skip("optomerge.example.toml not found")
     s = Settings.from_toml(str(example))
@@ -114,7 +114,7 @@ def test_cli_field_map_targets_valid_fields(module_name):
 def _load_script(name: str):
     """Import a top-level entry-point script by name (repo root on sys.path)."""
     import importlib
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[1]
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     return importlib.import_module(name)

@@ -16,7 +16,7 @@ Nakamura), reimplemented in Python with an object-oriented API.
 git clone git@github.com:paulruijgrok/optomerge.git
 cd optomerge
 python3 -m venv .optomerge && source .optomerge/bin/activate
-pip install -e optomerge/
+pip install -e .                             # one-time: install the package + deps
 python run_optomerge.py                      # process everything under test_data/
 ```
 
@@ -28,32 +28,65 @@ by default (compact, fixed 0–255 display; `--rgb-bits 16` for 16-bit). Use
 
 ## Installation
 
+`optomerge` uses a standard `src/` layout: the importable package is in
+`src/optomerge/`, and you make it importable by installing it once with pip. The
+install is *editable* (`-e`), so your local edits take effect immediately without
+reinstalling — but the one-time install step is required (running a script from
+the repo without installing will fail with "Cannot import optomerge").
+
 ### Requirements
 
 - Python 3.9+ (developed and tested on 3.11)
 - `numpy`, `scipy`, `scikit-image`, `tifffile` (installed automatically)
 - `tomli` — installed automatically only on Python 3.9/3.10, to read TOML config
   files (Python 3.11+ uses the standard-library `tomllib` instead)
-- Optional: `matplotlib` for the diagnostic script, `pytest` for the test suite
-  (`pip install -e "optomerge/[dev]"`), `opencv-python` for a faster warp/blur
-  backend (`pip install -e "optomerge/[cv2]"`)
+- Optional extras: `matplotlib` + `pytest` via the `[dev]` extra, and
+  `opencv-python` for a faster warp/blur backend via the `[cv2]` extra
 
-### Setup
+### Step-by-step setup
 
-The installable package lives in the nested `optomerge/` directory (which holds
-`pyproject.toml`), so install it by pointing pip at that folder:
+If you are new to Python environments, follow these in order from a terminal:
 
-```bash
-python3 -m venv .optomerge
-source .optomerge/bin/activate
-pip install -e "optomerge/[dev]"
-pytest optomerge/tests/          # optional: verify the install
-```
+1. **Get the code.**
+   ```bash
+   git clone git@github.com:paulruijgrok/optomerge.git
+   cd optomerge
+   ```
+2. **Create an isolated environment** (keeps optomerge's dependencies from
+   clashing with other projects). Do this once:
+   ```bash
+   python3 -m venv .optomerge
+   ```
+3. **Activate it** (do this every time you open a new terminal to use optomerge):
+   ```bash
+   source .optomerge/bin/activate        # macOS / Linux
+   # .optomerge\Scripts\activate         # Windows PowerShell
+   ```
+   Your prompt should now start with `(.optomerge)`.
+4. **Install the package** (once per environment). From the repo root — the
+   folder that contains `pyproject.toml`:
+   ```bash
+   pip install -e ".[dev]"               # editable install + matplotlib/pytest
+   ```
+   Use `pip install -e .` if you don't need the diagnostic plots or test suite,
+   or `pip install -e ".[dev,cv2]"` to also get the faster OpenCV backend.
+5. **Check it worked** (optional but recommended):
+   ```bash
+   python -c "import optomerge; print(optomerge.__file__)"   # prints a src/optomerge path
+   pytest                                                    # runs the test suite
+   ```
+
+After this, run the tools from the repo root with the environment activated,
+e.g. `python run_optomerge.py --dry-run`.
 
 ### Known gotchas
 
-- **Install target is `optomerge/`, not `.`** — the package is at
-  `optomerge/optomerge/`; run `pip install -e optomerge/`.
+- **You must `pip install -e .` once.** Because the package lives under `src/`,
+  it is *not* importable just by being in the repo folder — that's deliberate (it
+  guarantees you run the same installed package everywhere). If a script prints
+  "Cannot import optomerge", you skipped this step or forgot to activate the venv.
+- **Install from the repo root**, the folder containing `pyproject.toml` — the
+  target is `.` (not a subfolder as in older versions of this repo).
 - **Virtualenvs are not relocatable.** A venv hard-codes absolute paths, so
   renaming or moving the repo folder breaks the venv's `pip`/`activate` (they
   keep pointing at the old path and silently fall back to base Python). If you
@@ -79,9 +112,9 @@ pipe = MergePipeline(
 rgb = pipe.run(output="movie_aligned.tif")       # RGBMovie; also saved to disk
 ```
 
-See `optomerge/DESIGN.md` for the full object model (Movie/Frame/Channel/
+See `docs/DESIGN.md` for the full object model (Movie/Frame/Channel/
 Layout/Transform/Aligner and the pluggable reader/writer seams). The validated
-numerical routines live in the private `optomerge/optomerge/_kernels/`
+numerical routines live in the private `src/optomerge/_kernels/`
 subpackage and are reached only through the public classes.
 
 ### Command-line scripts
@@ -205,14 +238,13 @@ on Python 3.9+ — 3.11+ uses the standard-library `tomllib`, and on 3.9/3.10 th
 
 ## Repo map
 
-- `optomerge/` — the installable package
-  - `optomerge/optomerge/` — object-oriented public API
-  - `optomerge/optomerge/_kernels/` — private numerical core (I/O, segmentation,
+- `src/optomerge/` — the installable package (object-oriented public API)
+  - `src/optomerge/_kernels/` — private numerical core (I/O, segmentation,
     registration, transform, processing)
-  - `optomerge/tests/` — test suite (`pytest optomerge/tests/`)
-  - `optomerge/DESIGN.md` — architecture / object model
-  - `optomerge/pyproject.toml` — package metadata and dependencies
+- `tests/` — test suite (run `pytest` from the repo root)
+- `pyproject.toml` — package metadata and dependencies (at the repo root)
 - `run_optomerge.py`, `test_pipeline.py`, `profile_pipeline.py` — entry-point scripts
+- `docs/` — `DESIGN.md` (architecture / object model), `feature_registration.md`
 - `test_data/` — sample movies (git-ignored)
 - `output_temp/` — script output (git-ignored)
 

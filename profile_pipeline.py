@@ -29,9 +29,6 @@ from contextlib import contextmanager
 from pathlib import Path
 
 _here = Path(__file__).resolve().parent
-_pkg = _here / "optomerge"
-if _pkg.is_dir() and str(_pkg) not in sys.path:
-    sys.path.insert(0, str(_pkg))
 
 from optomerge import RawMovie, RGBMovie, Settings
 

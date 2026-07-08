@@ -29,11 +29,6 @@ from pathlib import Path
 
 import numpy as np
 
-_here = Path(__file__).resolve().parent
-_pkg = _here / "optomerge"
-if _pkg.is_dir() and str(_pkg) not in sys.path:
-    sys.path.insert(0, str(_pkg))
-
 from optomerge import ChannelLayout, RawMovie
 from optomerge._kernels.processing import crop_channel
 
