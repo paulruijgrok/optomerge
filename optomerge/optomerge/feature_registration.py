@@ -41,7 +41,7 @@ translation-only, brute-force grid search. Rotation/scale and better detectors
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 import numpy as np
 
@@ -70,7 +70,16 @@ class FeatureDistanceAligner(Aligner):
         Filament threshold, in std-devs above the per-frame mean of the reference
         channel.
     min_head_area : int
-        Discard head blobs smaller than this many pixels (noise rejection).
+        Discard head blobs smaller than this many pixels (rejects noise specks).
+    max_head_area : int, optional
+        Discard head blobs *larger* than this many pixels (rejects filament
+        crossings / bleed-through that aren't point-like heads). ``None`` = no
+        upper bound.
+    filament_min_area : int
+        Drop filament-mask connected components smaller than this many pixels
+        before building the distance transform. This despeckles the reference
+        mask so background noise is not treated as filament -- otherwise every
+        stray bright pixel becomes a spurious "nearest filament".
     refine : bool
         Run a parabolic sub-pixel refinement around the best grid cell.
     """
@@ -83,7 +92,9 @@ class FeatureDistanceAligner(Aligner):
         step: float = 1.0,
         head_sigma: float = 3.0,
         filament_sigma: float = 2.0,
-        min_head_area: int = 2,
+        min_head_area: int = 4,
+        max_head_area: Optional[int] = 60,
+        filament_min_area: int = 20,
         refine: bool = True,
     ) -> None:
         if max_shift <= 0:
@@ -93,6 +104,8 @@ class FeatureDistanceAligner(Aligner):
         self.head_sigma = float(head_sigma)
         self.filament_sigma = float(filament_sigma)
         self.min_head_area = int(min_head_area)
+        self.max_head_area = None if max_head_area is None else int(max_head_area)
+        self.filament_min_area = int(filament_min_area)
         self.refine = bool(refine)
 
     # -- detection --------------------------------------------------------- #
@@ -110,7 +123,11 @@ class FeatureDistanceAligner(Aligner):
 
         g = np.asarray(green, dtype=np.float64)
         r = np.asarray(red, dtype=np.float64)
+
+        # Filament mask, despeckled: keep only components of real size so stray
+        # background pixels don't become spurious "nearest filament" targets.
         fil = g > (g.mean() + self.filament_sigma * g.std())
+        fil = self._keep_large_components(fil, self.filament_min_area, ndimage)
 
         empty = np.empty(0, dtype=np.float64)
         hmask = r > (r.mean() + self.head_sigma * r.std())
@@ -120,12 +137,26 @@ class FeatureDistanceAligner(Aligner):
         if n_blobs == 0:
             return empty, empty, fil
         areas = ndimage.sum(np.ones_like(hmask), labels, index=range(1, n_blobs + 1))
-        keep = [i + 1 for i, a in enumerate(areas) if a >= self.min_head_area]
+        keep = [i + 1 for i, a in enumerate(areas)
+                if a >= self.min_head_area
+                and (self.max_head_area is None or a <= self.max_head_area)]
         if not keep:
             return empty, empty, fil
         cents = np.atleast_2d(np.asarray(ndimage.center_of_mass(hmask, labels, index=keep),
                                          dtype=np.float64))
         return cents[:, 0], cents[:, 1], fil
+
+    @staticmethod
+    def _keep_large_components(mask: np.ndarray, min_area: int, ndimage) -> np.ndarray:
+        """Return ``mask`` with connected components smaller than ``min_area`` removed."""
+        if min_area <= 1 or not mask.any():
+            return mask
+        labels, n = ndimage.label(mask)
+        if n == 0:
+            return mask
+        areas = np.asarray(ndimage.sum(np.ones_like(mask), labels, index=range(1, n + 1)))
+        big = np.flatnonzero(areas >= min_area) + 1  # component labels to keep
+        return np.isin(labels, big)
 
     def _detect(self, reference: "Channel", moving: "Channel"):
         """Per-frame head centroids (moving) + filament distance transforms (reference).

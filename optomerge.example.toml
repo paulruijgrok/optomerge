@@ -28,9 +28,12 @@ method = "phase"                       # registration algorithm:
                                        #   feature = head-to-filament distance minimisation, tailored
                                        #             to point-vs-line channels (heads on filaments).
                                        #             See "Feature-distance registration" in the README.
-feature_frames = 40                    # (feature) sampled raw frames used to fit the alignment
+feature_frames = 60                    # (feature) sampled raw frames used to fit the alignment
 head_sigma = 3.0                       # (feature) head threshold: mean + N*std of the moving channel
 filament_sigma = 2.0                   # (feature) filament threshold: mean + N*std of the reference
+head_min_area = 4                      # (feature) drop head blobs smaller than this (px) — noise
+head_max_area = 60                     # (feature) drop head blobs larger than this (px) — not point-like
+filament_min_area = 20                 # (feature) despeckle: drop filament-mask blobs smaller than this (px)
 use_scrub = false                      # align on upsampled scrub images (sub-pixel accuracy)
 upscale = 4                            # scrub upscaling factor when use_scrub = true
 init_rot = 0.0                         # initial guess: rotation (radians)

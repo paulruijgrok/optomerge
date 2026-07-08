@@ -167,10 +167,14 @@ the filament the head sits.
 python run_optomerge.py --feature --max-shift 30 --channel-order top_green_fils_bottom_red_heads
 ```
 
-Detection is deliberately simple (thresholding + connected components); tune it
-with `head_sigma` / `filament_sigma` (thresholds in std-devs above each channel's
-mean) and `feature_frames` (how many frames to sample) in the `[alignment]`
-config section. This is the first tailored algorithm behind the `Aligner` seam;
+Detection is deliberately simple (thresholding + connected components, with the
+filament mask despeckled and head blobs area-gated). Tune it in the `[alignment]`
+config section: `head_sigma` / `filament_sigma` (thresholds in std-devs above each
+channel's mean), `head_min_area` / `head_max_area` (keep only point-like head
+blobs), `filament_min_area` (drop background speckle from the filament mask), and
+`feature_frames` (how many frames to sample — raise it for sparse or dim movies).
+The `--feature` diagnostic run writes `diag_06`, a per-frame overlay of the
+detected heads and filament outline, for exactly this tuning. This is the first tailored algorithm behind the `Aligner` seam;
 it is opt-in and does not change the default `phase` behaviour. Current scope:
 translation only — rotation/scale and richer detectors are future work.
 

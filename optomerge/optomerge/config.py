@@ -55,11 +55,18 @@ class AlignmentSettings:
     #: point-vs-line OptoSplit channels -- see FeatureDistanceAligner).
     method: str = "phase"
     #: Sampled raw frames used by the "feature" aligner (spread across the movie).
-    feature_frames: int = 40
+    feature_frames: int = 60
     #: "feature" head threshold, in std-devs above the moving channel's per-frame mean.
     head_sigma: float = 3.0
     #: "feature" filament threshold, in std-devs above the reference channel's mean.
     filament_sigma: float = 2.0
+    #: "feature" head blob area gate (pixels): keep blobs within [min, max]; the
+    #: upper bound rejects filament crossings / bleed that aren't point-like heads.
+    head_min_area: int = 4
+    head_max_area: int = 60
+    #: "feature" filament despeckle: drop mask components smaller than this (pixels)
+    #: so background noise is not treated as filament.
+    filament_min_area: int = 20
     #: Align on upsampled scrub images for sub-pixel accuracy.
     use_scrub: bool = False
     #: Scrub-image upscaling factor when ``use_scrub`` is set.
@@ -264,6 +271,8 @@ class Settings:
             return FeatureDistanceAligner(
                 max_shift=a.max_shift if a.max_shift > 0 else 30.0,
                 head_sigma=a.head_sigma, filament_sigma=a.filament_sigma,
+                min_head_area=a.head_min_area, max_head_area=a.head_max_area,
+                filament_min_area=a.filament_min_area,
             )
         from .registration import PhaseCorrelationAligner
         return PhaseCorrelationAligner(

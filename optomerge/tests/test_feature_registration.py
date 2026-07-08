@@ -80,13 +80,16 @@ def test_needs_frames_flag():
 
 
 def test_config_selects_feature_aligner():
-    s = Settings.from_sources({"alignment": {"method": "feature",
-                                             "head_sigma": 4.0, "max_shift": 20}})
+    s = Settings.from_sources({"alignment": {
+        "method": "feature", "head_sigma": 4.0, "max_shift": 20,
+        "head_min_area": 5, "head_max_area": 80, "filament_min_area": 30,
+    }})
     a = s.build_aligner()
     assert isinstance(a, FeatureDistanceAligner)
     assert a.max_shift == 20 and a.head_sigma == 4.0
-    # Default calibrator threads feature_frames through.
-    assert s.build_calibrator().feature_frames == 40
+    assert a.min_head_area == 5 and a.max_head_area == 80 and a.filament_min_area == 30
+    # Default calibrator threads feature_frames through (default bumped to 60).
+    assert s.build_calibrator().feature_frames == 60
 
 
 def test_config_default_is_phase():
@@ -101,6 +104,28 @@ def test_feature_unconstrained_max_shift_defaults_to_30():
 # --------------------------------------------------------------------------- #
 # Full detection path (needs scipy)
 # --------------------------------------------------------------------------- #
+
+def test_detection_filters_noise():
+    """Filament despeckle + head area gate reject speckle and oversized blobs."""
+    pytest.importorskip("scipy")
+    H = W = 50
+    green = np.zeros((H, W))
+    green[24:27, 5:45] = 5.0            # a real filament bar (large component)
+    green[2, 2] = green[40, 40] = 9.0   # two isolated bright specks -> despeckled out
+    red = np.zeros((H, W))
+    red[25, 20:22] = 8.0                # a genuine small head (~2-6 px)
+    red[10, 10] = 8.0                   # a 1-px noise speck -> below min_head_area
+    red[5:15, 30:40] = 8.0              # a big 100-px blob -> above max_head_area
+
+    a = FeatureDistanceAligner(max_shift=6, min_head_area=2, max_head_area=60,
+                               filament_min_area=20)
+    rows, cols, fil = a.frame_features(green, red)
+    # Filament mask keeps the bar but not the isolated specks.
+    assert fil[25, 25] and not fil[2, 2] and not fil[40, 40]
+    # Exactly the genuine head survives the area gate (noise + big blob rejected).
+    assert rows.size == 1
+    assert abs(rows[0] - 25) <= 1 and 19 <= cols[0] <= 22
+
 
 def test_end_to_end_recovers_shift():
     pytest.importorskip("scipy")
