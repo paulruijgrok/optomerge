@@ -93,7 +93,7 @@ def _have(mod: str) -> bool:
 
 
 def _first_test_movie() -> Path | None:
-    data_dir = Path(__file__).resolve().parents[2] / "test_data"
+    data_dir = Path(__file__).resolve().parents[1] / "test_data"
     if not data_dir.is_dir():
         return None
     tifs = sorted(data_dir.rglob("*.tif")) + sorted(data_dir.rglob("*.tiff"))

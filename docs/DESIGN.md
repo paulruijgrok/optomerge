@@ -1,9 +1,9 @@
 # The object-oriented design of optomerge
 
 This document describes the architecture of the `optomerge` package. The
-object-oriented public API lives in `optomerge/optomerge/` as the domain classes
+object-oriented public API lives in `src/optomerge/` as the domain classes
 described below; the validated numerical routines they delegate to live in the
-private `optomerge/optomerge/_kernels/` subpackage.
+private `src/optomerge/_kernels/` subpackage.
 
 ## The objects
 

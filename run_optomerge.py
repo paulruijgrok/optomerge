@@ -79,14 +79,8 @@ from pathlib import Path
 
 import numpy as np
 
-# ---------------------------------------------------------------------------
-# Locate the optomerge package (works before pip-install if the package folder
-# sits next to this script: ./optomerge/optomerge/).
-# ---------------------------------------------------------------------------
+# Directory containing this script (used to resolve relative input/output paths).
 _here = Path(__file__).resolve().parent
-_pkg = _here / "optomerge"
-if _pkg.is_dir() and str(_pkg) not in sys.path:
-    sys.path.insert(0, str(_pkg))
 
 try:
     from optomerge import (
@@ -101,8 +95,7 @@ try:
 except ImportError as e:
     sys.exit(
         "ERROR: Cannot import optomerge.\n"
-        "  Install it with 'pip install -e optomerge/' or make sure the\n"
-        "  optomerge/ package folder sits next to this script.\n"
+        "  Install it first (from the repo root):  pip install -e .\n"
         f"  Original error: {e}"
     )
 

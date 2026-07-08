@@ -23,8 +23,7 @@ Usage
 
 Requirements
 ------------
-    pip install -e optomerge/      # numpy, scipy, scikit-image, tifffile
-    pip install matplotlib         # for the diagnostic images
+    pip install -e ".[dev]"        # from the repo root; installs deps + matplotlib
 """
 
 from __future__ import annotations
@@ -43,11 +42,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
-# ── Locate the optomerge package ──────────────────────────────────────────
+# Directory containing this script (used to resolve relative input/output paths).
 _here = Path(__file__).resolve().parent
-_pkg = _here / "optomerge"
-if _pkg.is_dir() and str(_pkg) not in sys.path:
-    sys.path.insert(0, str(_pkg))
 
 try:
     from optomerge import (
@@ -61,8 +57,7 @@ try:
 except ImportError as exc:
     sys.exit(
         f"Cannot import optomerge ({exc}).\n"
-        f"Install it with:  pip install -e optomerge/\n"
-        f"or ensure the optomerge/ package folder is next to this script."
+        f"Install it first (from the repo root):  pip install -e ."
     )
 
 # argparse dests -> flat Settings fields. These flags default to argparse.SUPPRESS
