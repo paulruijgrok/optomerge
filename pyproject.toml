@@ -26,3 +26,9 @@ cv2 = ["opencv-python>=4.5"]
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["optomerge*"]
+
+[tool.pytest.ini_options]
+# Collect only the test suite, not the root-level CLI scripts (run_optomerge.py,
+# test_pipeline.py) — the latter matches test_*.py but is an entry-point script,
+# not a test module.
+testpaths = ["tests"]
