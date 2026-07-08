@@ -80,6 +80,12 @@ class FeatureDistanceAligner(Aligner):
         before building the distance transform. This despeckles the reference
         mask so background noise is not treated as filament -- otherwise every
         stray bright pixel becomes a spurious "nearest filament".
+    distance_cap : float
+        Robustness threshold, in pixels. A head whose distance to the nearest
+        filament exceeds this is treated as an orphan (a red-only object, or a
+        filament too faint to detect): its distance is clipped to ``distance_cap``
+        in the cost, so it contributes a constant and cannot bias the fit. Also
+        defines the inlier set used for the reported score.
     refine : bool
         Run a parabolic sub-pixel refinement around the best grid cell.
     """
@@ -95,6 +101,7 @@ class FeatureDistanceAligner(Aligner):
         min_head_area: int = 4,
         max_head_area: Optional[int] = 60,
         filament_min_area: int = 20,
+        distance_cap: float = 6.0,
         refine: bool = True,
     ) -> None:
         if max_shift <= 0:
@@ -106,6 +113,7 @@ class FeatureDistanceAligner(Aligner):
         self.min_head_area = int(min_head_area)
         self.max_head_area = None if max_head_area is None else int(max_head_area)
         self.filament_min_area = int(filament_min_area)
+        self.distance_cap = float(distance_cap)
         self.refine = bool(refine)
 
     # -- detection --------------------------------------------------------- #
@@ -185,26 +193,38 @@ class FeatureDistanceAligner(Aligner):
 
     # -- objective --------------------------------------------------------- #
 
-    @staticmethod
-    def _mean_distance(per_frame, t1: float, t2: float, penalty: float) -> float:
-        """Mean head-to-filament distance if the moving channel is shifted by (t1, t2).
+    def _distances(self, per_frame, t1: float, t2: float) -> np.ndarray:
+        """Head-to-nearest-filament distances if the moving channel shifts by (t1, t2).
 
         A head at ``(row, col)`` maps to ``(row + t2, col + t1)`` (Transform's
         forward convention for rot=0, s=1: ``t1 -> x/col``, ``t2 -> y/row``).
-        Out-of-bounds heads are charged ``penalty`` so the search cannot cheat by
-        pushing heads off the image.
+        Out-of-bounds heads are charged ``distance_cap`` so the search cannot
+        cheat by pushing heads off the image. Returns one distance per head.
         """
-        total = 0.0
-        count = 0
+        out = []
         for rows, cols, dt in per_frame:
             rr = np.round(rows + t2).astype(int)
             cc = np.round(cols + t1).astype(int)
             ok = (rr >= 0) & (rr < dt.shape[0]) & (cc >= 0) & (cc < dt.shape[1])
+            d = np.full(rows.shape, self.distance_cap, dtype=np.float64)
             if ok.any():
-                total += float(dt[rr[ok], cc[ok]].sum())
-            total += float((~ok).sum()) * penalty
-            count += rows.size
-        return total / count if count else float("inf")
+                d[ok] = dt[rr[ok], cc[ok]]
+            out.append(d)
+        return np.concatenate(out) if out else np.empty(0)
+
+    def _robust_cost(self, per_frame, t1: float, t2: float) -> float:
+        """Mean **capped** head-to-filament distance -- robust to orphan heads.
+
+        Each head's distance is clipped to ``distance_cap`` before averaging, so a
+        head with no filament nearby (a red-only object, or a filament too faint
+        to detect) contributes a constant regardless of the translation and cannot
+        bias the fit. The minimum is therefore driven by the heads that *do* sit
+        on filaments.
+        """
+        d = self._distances(per_frame, t1, t2)
+        if d.size == 0:
+            return float("inf")
+        return float(np.minimum(d, self.distance_cap).mean())
 
     # -- Aligner API ------------------------------------------------------- #
 
@@ -214,7 +234,6 @@ class FeatureDistanceAligner(Aligner):
             # No detectable features -> no evidence to move; return identity.
             return Transform(score=0.0)
 
-        penalty = 2.0 * self.max_shift
         grid = np.arange(-self.max_shift, self.max_shift + 1e-9, self.step)
 
         best_cost = float("inf")
@@ -222,7 +241,7 @@ class FeatureDistanceAligner(Aligner):
         costs = np.empty((grid.size, grid.size), dtype=np.float64)
         for i, t2 in enumerate(grid):          # rows
             for j, t1 in enumerate(grid):      # cols
-                c = self._mean_distance(per_frame, t1, t2, penalty)
+                c = self._robust_cost(per_frame, t1, t2)
                 costs[i, j] = c
                 if c < best_cost:
                     best_cost = c
@@ -232,8 +251,13 @@ class FeatureDistanceAligner(Aligner):
         if self.refine:
             t1, t2 = self._refine(costs, grid, best)
 
-        # Higher score = better (smaller mean distance). Bounded to (0, 1].
-        score = 1.0 / (1.0 + best_cost)
+        # Report quality from the *inliers* -- heads that actually landed on a
+        # filament (distance < cap) -- so orphan heads don't drag the score down.
+        d = self._distances(per_frame, t1, t2)
+        inliers = d[d < self.distance_cap]
+        inlier_frac = inliers.size / d.size if d.size else 0.0
+        inlier_mean = float(inliers.mean()) if inliers.size else self.distance_cap
+        score = inlier_frac / (1.0 + inlier_mean)  # high = many heads, tightly on filament
         return Transform(t1=float(t1), t2=float(t2), rot=0.0, s1=1.0, s2=1.0, score=float(score))
 
     def _refine(self, costs: np.ndarray, grid: np.ndarray, best) -> Tuple[float, float]:

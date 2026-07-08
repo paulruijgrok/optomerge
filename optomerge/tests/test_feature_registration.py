@@ -48,6 +48,22 @@ def test_recovers_single_axis_shift(monkeypatch):
     assert abs(t.t2 - 0.0) < 0.6
 
 
+def test_robust_to_orphan_heads(monkeypatch):
+    # One filament dot at (50, 50). Real heads at (47, 47) need shift (+3, +3);
+    # orphan heads sit at (10, 90), far from any filament at any small shift.
+    dt = _dot_dt((100, 100), 50, 50)
+    rows = np.array([47.0, 47.0, 10.0, 10.0])   # 2 inliers + 2 orphans
+    cols = np.array([47.0, 47.0, 90.0, 90.0])
+    per_frame = [(rows, cols, dt) for _ in range(4)]
+    a = FeatureDistanceAligner(max_shift=10, step=1.0, distance_cap=6.0)
+    monkeypatch.setattr(a, "_detect", lambda ref, mov: per_frame)
+    t = a.align(object(), object())
+    # Orphans (capped) must not drag the fit away from the real heads.
+    assert abs(t.t1 - 3.0) < 0.6 and abs(t.t2 - 3.0) < 0.6
+    # Score reflects the inlier fraction (~half the heads are on filament).
+    assert 0.3 < t.score < 0.7
+
+
 def test_no_features_returns_identity(monkeypatch):
     a = FeatureDistanceAligner(max_shift=8)
     monkeypatch.setattr(a, "_detect", lambda ref, mov: [])

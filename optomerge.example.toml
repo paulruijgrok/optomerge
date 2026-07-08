@@ -34,6 +34,8 @@ filament_sigma = 2.0                   # (feature) filament threshold: mean + N*
 head_min_area = 4                      # (feature) drop head blobs smaller than this (px) — noise
 head_max_area = 60                     # (feature) drop head blobs larger than this (px) — not point-like
 filament_min_area = 20                 # (feature) despeckle: drop filament-mask blobs smaller than this (px)
+distance_cap = 6.0                     # (feature) heads farther than this (px) from any filament are
+                                       #   treated as orphans (red-only / undetected) and don't bias the fit
 use_scrub = false                      # align on upsampled scrub images (sub-pixel accuracy)
 upscale = 4                            # scrub upscaling factor when use_scrub = true
 init_rot = 0.0                         # initial guess: rotation (radians)

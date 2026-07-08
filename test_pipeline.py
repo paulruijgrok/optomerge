@@ -348,6 +348,12 @@ def save_diag_feature_detection(aligner, ref_channel, mov_channel, transform,
     for ax in axes.flat:
         ax.axis("off")
 
+    cap = getattr(aligner, "distance_cap", np.inf)
+    try:
+        from scipy.ndimage import distance_transform_edt
+    except Exception:
+        distance_transform_edt = None
+
     for ax, k in zip(axes.flat, k_show):
         g = green[:, :, k]
         rows, cols, fil = aligner.frame_features(g, red[:, :, k])
@@ -356,22 +362,36 @@ def save_diag_feature_detection(aligner, ref_channel, mov_channel, transform,
                   aspect="auto", interpolation="nearest")
         if fil.any():
             ax.contour(fil.astype(float), levels=[0.5], colors="lime", linewidths=0.8)
+        n_in = 0
         if rows.size:
-            ax.plot(cols, rows, "x", color="red", markersize=7, mew=1.5,
+            rr = rows + transform.t2
+            cc = cols + transform.t1
+            # Classify each registered head as inlier (on a filament, dist < cap)
+            # or orphan, mirroring the robust cost.
+            inlier = np.ones(rows.shape, dtype=bool)
+            if distance_transform_edt is not None and fil.any():
+                dt = distance_transform_edt(~fil)
+                ri = np.clip(np.round(rr).astype(int), 0, dt.shape[0] - 1)
+                ci = np.clip(np.round(cc).astype(int), 0, dt.shape[1] - 1)
+                inlier = dt[ri, ci] < cap
+            n_in = int(inlier.sum())
+            ax.plot(cols, rows, "x", color="red", markersize=6, mew=1.2,
                     label="detected head")
-            ax.plot(cols + transform.t1, rows + transform.t2, "o",
-                    mfc="none", mec="yellow", markersize=9, mew=1.5,
-                    label="after registration")
-        ax.set_title(f"sampled frame {k}  ({rows.size} head{'s' if rows.size != 1 else ''})",
-                     fontsize=8)
+            if inlier.any():
+                ax.plot(cc[inlier], rr[inlier], "o", mfc="none", mec="yellow",
+                        markersize=9, mew=1.6, label="registered (on filament)")
+            if (~inlier).any():
+                ax.plot(cc[~inlier], rr[~inlier], "o", mfc="none", mec="deepskyblue",
+                        markersize=9, mew=1.2, label="orphan (ignored)")
+        ax.set_title(f"frame {k}: {rows.size} heads, {n_in} on filament", fontsize=8)
 
     handles, labels = axes.flat[0].get_legend_handles_labels()
     if handles:
         fig.legend(handles, labels, loc="lower center", ncol=2, fontsize=8,
                    framealpha=0.8, bbox_to_anchor=(0.5, -0.02))
-    fig.suptitle(f"{stem}\nfeature detection (green=filament outline, red x=head, "
-                 f"yellow o=head after registration)  t=({transform.t1:.2f},{transform.t2:.2f})",
-                 fontsize=9)
+    fig.suptitle(f"{stem}\nfeature detection: green=filament outline, red x=detected head, "
+                 f"yellow o=on filament (used), blue o=orphan (ignored)  "
+                 f"t=({transform.t1:.2f},{transform.t2:.2f})", fontsize=9)
     fig.tight_layout(rect=(0, 0.03, 1, 0.96))
     fig.savefig(out_dir / f"{stem}_diag_06_feature_detection.png", dpi=150)
     plt.close(fig)

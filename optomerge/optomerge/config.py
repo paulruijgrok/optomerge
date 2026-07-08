@@ -67,6 +67,10 @@ class AlignmentSettings:
     #: "feature" filament despeckle: drop mask components smaller than this (pixels)
     #: so background noise is not treated as filament.
     filament_min_area: int = 20
+    #: "feature" robustness cap (pixels): a head farther than this from any filament
+    #: is treated as an orphan (red-only object / undetected filament) and cannot
+    #: bias the fit. Also the inlier threshold for the reported score.
+    distance_cap: float = 6.0
     #: Align on upsampled scrub images for sub-pixel accuracy.
     use_scrub: bool = False
     #: Scrub-image upscaling factor when ``use_scrub`` is set.
@@ -272,7 +276,7 @@ class Settings:
                 max_shift=a.max_shift if a.max_shift > 0 else 30.0,
                 head_sigma=a.head_sigma, filament_sigma=a.filament_sigma,
                 min_head_area=a.head_min_area, max_head_area=a.head_max_area,
-                filament_min_area=a.filament_min_area,
+                filament_min_area=a.filament_min_area, distance_cap=a.distance_cap,
             )
         from .registration import PhaseCorrelationAligner
         return PhaseCorrelationAligner(
