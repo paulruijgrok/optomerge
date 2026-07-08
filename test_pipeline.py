@@ -73,6 +73,7 @@ _CLI_TO_FIELD = {
     "channel_order": "channel_order", "frames": "projection_frames",
     "bg_radius": "bg_radius", "use_scrub": "use_scrub", "upscale": "upscale",
     "max_shift": "max_shift", "fit_scale_rotation": "fit_scale_rotation",
+    "align_method": "method",
     "verbose": "verbose", "dry_run": "dry_run",
 }
 
@@ -117,6 +118,8 @@ def run_stages(
     max_shift: float = 0.0,
     rgb_bitdepth: int = 8,
     fit_scale_rotation: bool = True,
+    align_method: str = "phase",
+    feature_frames: int = 40,
 ) -> StageResult:
     """Execute the pipeline stage by stage, saving a diagnostic after each.
 
@@ -149,11 +152,19 @@ def run_stages(
     from optomerge.calibration import _compute_limits
     sr.limits = _compute_limits(sr.layout, sr.max_proj, 0.0)
     proj_channels = {c.name: c.calibrate() for c in sr.layout.split(sr.mean_proj)}
-    reference = next(c for c in proj_channels.values() if c.reference)
-    aligner = PhaseCorrelationAligner(use_scrub=use_scrub, upscale=upscale,
-                                      max_shift=max_shift, fit_scale_rotation=fit_scale_rotation)
+    if align_method == "feature":
+        from optomerge import FeatureDistanceAligner
+        from optomerge.calibration import _sample_frame_stack
+        aligner = FeatureDistanceAligner(max_shift=max_shift if max_shift > 0 else 30.0)
+        frame_stack = _sample_frame_stack(movie, feature_frames, limit=projection_frames)
+        align_channels = {c.name: c for c in sr.layout.split(frame_stack)}
+    else:
+        aligner = PhaseCorrelationAligner(use_scrub=use_scrub, upscale=upscale,
+                                          max_shift=max_shift, fit_scale_rotation=fit_scale_rotation)
+        align_channels = proj_channels
+    reference = next(c for c in align_channels.values() if c.reference)
     for spec in sr.layout.moving_specs:
-        sr.transforms[spec.name] = aligner.align(reference, proj_channels[spec.name])
+        sr.transforms[spec.name] = aligner.align(reference, align_channels[spec.name])
 
     for name, t in sr.transforms.items():
         print(f"         {name}: t=({t.t1:.3f},{t.t2:.3f})  "
@@ -336,6 +347,8 @@ def process_file(
     max_shift: float = 0.0,
     rgb_bitdepth: int = 8,
     fit_scale_rotation: bool = True,
+    align_method: str = "phase",
+    feature_frames: int = 40,
 ) -> dict:
     """Run the full pipeline on *src*, saving outputs + diagnostics to *dst_dir*."""
     result = dict(src=str(src), success=False, duration=0.0,
@@ -349,6 +362,7 @@ def process_file(
             use_scrub, upscale, save_diag, dst_dir, stem, verbose, merge=merge,
             max_shift=max_shift, rgb_bitdepth=rgb_bitdepth,
             fit_scale_rotation=fit_scale_rotation,
+            align_method=align_method, feature_frames=feature_frames,
         )
         result["n_frames"] = sr.n_frames
         if sr.transforms:
@@ -401,6 +415,12 @@ def main():
     p.add_argument("--no-rotation", action="store_const", const=False, default=S,
                    dest="fit_scale_rotation",
                    help="fit translation only (pin rotation/scale)")
+    p.add_argument("--align-method", default=S, choices=["phase", "feature"],
+                   dest="align_method",
+                   help="registration algorithm: phase (default) | feature "
+                        "(head-to-filament distance)")
+    p.add_argument("--feature", action="store_const", const="feature", default=S,
+                   dest="align_method", help="shorthand for --align-method feature")
     p.add_argument("--verbose", action="store_true", default=S,
                    help="Show detailed per-step progress")
     p.add_argument("--dry-run", action="store_true", default=S, dest="dry_run",
@@ -462,7 +482,9 @@ def main():
     print(f"  Config: {', '.join(args.config) if args.config else '(built-in defaults)'}")
     print(f"  Channel order: {settings.channels.channel_order}   "
           f"BG radius: {settings.processing.bg_radius}")
-    print(f"  Aligner: phase-correlation"
+    _aligner_desc = ("feature (head-to-filament distance)"
+                     if settings.alignment.method == "feature" else "phase-correlation")
+    print(f"  Aligner: {_aligner_desc}"
           + (f" (scrub x{settings.alignment.upscale})" if settings.alignment.use_scrub else ""))
     print(f"  Diag images: {'no' if args.no_diag else 'yes'}")
     print("=" * 68)
@@ -486,6 +508,8 @@ def main():
             merge=not args.no_merge, max_shift=settings.alignment.max_shift,
             rgb_bitdepth=settings.io.rgb_bitdepth,
             fit_scale_rotation=settings.alignment.fit_scale_rotation,
+            align_method=settings.alignment.method,
+            feature_frames=settings.alignment.feature_frames,
         )
         results.append(result)
         mins, secs = divmod(int(result["duration"]), 60)

@@ -22,7 +22,18 @@ if TYPE_CHECKING:
 
 
 class Aligner(ABC):
-    """Strategy that computes a :class:`Transform` mapping ``moving`` -> ``reference``."""
+    """Strategy that computes a :class:`Transform` mapping ``moving`` -> ``reference``.
+
+    ``needs_frames`` declares what the calibrator should hand to :meth:`align`.
+    The default (``False``) means the aligner works on the channel *projection*
+    crops (a single 2-D image per channel), as phase correlation does. An aligner
+    that sets ``needs_frames = True`` is instead given channels whose ``data`` is
+    a ``(h, w, n)`` stack of sampled raw frames, so it can reason per frame (e.g.
+    the feature-distance aligner, which needs each frame's head positions).
+    """
+
+    #: Whether :meth:`align` wants per-frame stacks (True) or projections (False).
+    needs_frames: bool = False
 
     @abstractmethod
     def align(self, reference: "Channel", moving: "Channel") -> Transform:

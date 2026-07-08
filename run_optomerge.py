@@ -129,7 +129,7 @@ _CLI_TO_FIELD = {
     "bg_radius": "bg_radius", "bunch_size": "bunch_size",
     "norm_projection": "norm_projection",
     "use_scrub": "use_scrub", "upscale": "upscale", "max_shift": "max_shift",
-    "fit_scale_rotation": "fit_scale_rotation",
+    "fit_scale_rotation": "fit_scale_rotation", "align_method": "method",
     "calibration_mode": "mode",
     "group_by": "by", "group_token": "token_pattern",
     "reuse_alignment": "reuse_alignment", "verbose": "verbose", "dry_run": "dry_run",
@@ -305,6 +305,13 @@ def main() -> None:
     parser.add_argument("--no-rotation", action="store_const", const=False, default=S,
                         dest="fit_scale_rotation",
                         help="fit translation only (pin rotation/scale; avoids over-fitting)")
+    parser.add_argument("--align-method", default=S, choices=["phase", "feature"],
+                        dest="align_method",
+                        help="registration algorithm: phase (default) | feature "
+                             "(head-to-filament distance, for point-vs-line channels)")
+    parser.add_argument("--feature", action="store_const", const="feature", default=S,
+                        dest="align_method",
+                        help="shorthand for --align-method feature")
     parser.add_argument("--robust", action="store_const", const="robust", default=S,
                         dest="calibration_mode",
                         help="use the robust best-of-N calibrator")

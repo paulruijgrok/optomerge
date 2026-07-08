@@ -50,6 +50,16 @@ class ChannelSettings:
 
 @dataclass
 class AlignmentSettings:
+    #: Registration algorithm: "phase" (default; FFT phase correlation, general
+    #: purpose) or "feature" (head-to-filament distance minimisation, tailored to
+    #: point-vs-line OptoSplit channels -- see FeatureDistanceAligner).
+    method: str = "phase"
+    #: Sampled raw frames used by the "feature" aligner (spread across the movie).
+    feature_frames: int = 40
+    #: "feature" head threshold, in std-devs above the moving channel's per-frame mean.
+    head_sigma: float = 3.0
+    #: "feature" filament threshold, in std-devs above the reference channel's mean.
+    filament_sigma: float = 2.0
     #: Align on upsampled scrub images for sub-pixel accuracy.
     use_scrub: bool = False
     #: Scrub-image upscaling factor when ``use_scrub`` is set.
@@ -246,8 +256,16 @@ class Settings:
 
     def build_aligner(self):
         """Construct the :class:`Aligner` this config describes."""
-        from .registration import PhaseCorrelationAligner
         a = self.alignment
+        if a.method == "feature":
+            from .feature_registration import FeatureDistanceAligner
+            # The feature aligner needs a bounded search; default to 30 px when
+            # max_shift is left at its "unconstrained" sentinel of 0.
+            return FeatureDistanceAligner(
+                max_shift=a.max_shift if a.max_shift > 0 else 30.0,
+                head_sigma=a.head_sigma, filament_sigma=a.filament_sigma,
+            )
+        from .registration import PhaseCorrelationAligner
         return PhaseCorrelationAligner(
             init_rot=a.init_rot, init_s1=a.init_s1, init_s2=a.init_s2,
             use_scrub=a.use_scrub, upscale=a.upscale, max_shift=a.max_shift,
@@ -294,6 +312,7 @@ class Settings:
             projection_frames=self.channels.projection_frames,
             criteria=criteria, verbose=self.runtime.verbose,
             norm_from_max=norm_from_max, norm_exclude=norm_exclude,
+            feature_frames=self.alignment.feature_frames,
         )
 
     def to_pipeline_kwargs(self) -> Dict[str, Any]:

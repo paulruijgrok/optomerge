@@ -145,6 +145,35 @@ python run_optomerge.py --reuse-alignment "good_movie.tif" --max-shift 30
 Sets are partitioned by `--group-by run|token|folder`; intensity normalisation
 is always recomputed per movie, so only the geometric alignment is shared.
 
+### Feature-distance registration (point-vs-line channels)
+
+Phase correlation aligns two images by their shared texture, which is weak when
+the channels image *different-looking* structures — a point-like "head" in one
+and a line-like filament in the other. On that kind of data the correlation peak
+is easily captured by noise, giving a "seeing-double" residual that no frame
+count or peak constraint fully removes.
+
+The `feature` method targets exactly this case. When the head and filament are
+one physical object that co-moves (the head sits on the filament in every frame,
+at a tip or along its length), the registration can be found geometrically:
+detect the head centroids in the moving channel and the filament mask in the
+reference channel per frame, then find the translation that minimises the total
+head-to-filament distance. Because the head is *on* the filament in every frame,
+that distance goes to zero at the correct registration regardless of where along
+the filament the head sits.
+
+```bash
+# translation-only head-to-filament registration, 40 sampled frames, ±30 px search
+python run_optomerge.py --feature --max-shift 30 --channel-order top_green_fils_bottom_red_heads
+```
+
+Detection is deliberately simple (thresholding + connected components); tune it
+with `head_sigma` / `filament_sigma` (thresholds in std-devs above each channel's
+mean) and `feature_frames` (how many frames to sample) in the `[alignment]`
+config section. This is the first tailored algorithm behind the `Aligner` seam;
+it is opt-in and does not change the default `phase` behaviour. Current scope:
+translation only — rotation/scale and richer detectors are future work.
+
 ### Configuration & run provenance
 
 Run parameters resolve in three layers, each overriding the previous: built-in

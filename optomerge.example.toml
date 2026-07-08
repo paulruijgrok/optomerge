@@ -23,6 +23,14 @@ segmentation = "row_profile"           # row_profile (robust rectangles) | line_
 # projection_frames = 200              # frames used for detection/alignment (unset = all frames)
 
 [alignment]
+method = "phase"                       # registration algorithm:
+                                       #   phase   = FFT phase correlation (default, general purpose)
+                                       #   feature = head-to-filament distance minimisation, tailored
+                                       #             to point-vs-line channels (heads on filaments).
+                                       #             See "Feature-distance registration" in the README.
+feature_frames = 40                    # (feature) sampled raw frames used to fit the alignment
+head_sigma = 3.0                       # (feature) head threshold: mean + N*std of the moving channel
+filament_sigma = 2.0                   # (feature) filament threshold: mean + N*std of the reference
 use_scrub = false                      # align on upsampled scrub images (sub-pixel accuracy)
 upscale = 4                            # scrub upscaling factor when use_scrub = true
 init_rot = 0.0                         # initial guess: rotation (radians)
