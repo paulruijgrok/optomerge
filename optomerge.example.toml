@@ -39,6 +39,10 @@ distance_cap = 6.0                     # (feature) heads farther than this (px) 
 deweight_stuck = false                 # (feature) weight heads by 1/persistence so a stuck object counts
                                        #   once, not once-per-frame (restores field coverage)
 stuck_radius = 2.0                     # (feature) px within which cross-frame detections are the same stuck object
+fit_rotation = false                   # (feature) also fit a small bounded rotation, layered on the translation fit
+fit_scale = false                      # (feature) also fit a small bounded isotropic scale, layered on the translation fit
+feature_rotation_max_deg = 2.0         # (feature) rotation search bound (deg): |rot| <= this
+feature_scale_max_pct = 2.0            # (feature) isotropic scale search bound (percent): |s-1|*100 <= this
 use_scrub = false                      # align on upsampled scrub images (sub-pixel accuracy)
 upscale = 4                            # scrub upscaling factor when use_scrub = true
 init_rot = 0.0                         # initial guess: rotation (radians)

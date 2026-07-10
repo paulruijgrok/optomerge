@@ -78,6 +78,16 @@ class AlignmentSettings:
     #: "feature" radius (pixels) within which detections in different frames are
     #: treated as the same stuck object for the persistence count.
     stuck_radius: float = 2.0
+    #: "feature" also fit a small bounded rotation between the channels, layered
+    #: on the translation fit (for a field-dependent residual = optical rotation).
+    fit_rotation: bool = False
+    #: "feature" also fit a small bounded isotropic scale between the channels.
+    fit_scale: bool = False
+    #: "feature" rotation search bound (degrees): |rotation| <= this. Kept tight
+    #: so the extra degree of freedom cannot over-fit.
+    feature_rotation_max_deg: float = 2.0
+    #: "feature" isotropic scale search bound (percent): |scale - 1| * 100 <= this.
+    feature_scale_max_pct: float = 2.0
     #: Align on upsampled scrub images for sub-pixel accuracy.
     use_scrub: bool = False
     #: Scrub-image upscaling factor when ``use_scrub`` is set.
@@ -285,6 +295,9 @@ class Settings:
                 min_head_area=a.head_min_area, max_head_area=a.head_max_area,
                 filament_min_area=a.filament_min_area, distance_cap=a.distance_cap,
                 deweight_stuck=a.deweight_stuck, stuck_radius=a.stuck_radius,
+                fit_rotation=a.fit_rotation, fit_scale=a.fit_scale,
+                rotation_max_deg=a.feature_rotation_max_deg,
+                scale_max_pct=a.feature_scale_max_pct,
             )
         from .registration import PhaseCorrelationAligner
         return PhaseCorrelationAligner(
