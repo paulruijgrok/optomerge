@@ -21,22 +21,29 @@ by the affine transform (~4s, on the pow2-padded canvas) and RGB assembly
 ## Batch: file-level parallelism (`--workers`)
 
 `run_optomerge.py` over 6 movies (`MyLOV1Char/20170803`, ~800 frames each), same
-12-CPU machine, cv2 backend, each worker capped to ~cores/workers threads:
+12-CPU machine, cv2 backend, each worker capped to ~cores/workers threads. Two
+runs: float64 merge (before Phase 3) and float32 merge (`precision = "single"`,
+now the default). Speedup is vs the float64 single-worker baseline (49.6s):
 
-| workers | total | speedup |
-|--------:|------:|--------:|
-| 1 | 49.6s | 1.00× |
-| 2 | 39.3s | 1.26× |
-| 3 | 35.6s | **1.39×** |
-| 4 | 39.2s | 1.27× |
-| 6 | 43.0s | 1.15× |
+| workers | float64 | float32 | float32 speedup |
+|--------:|--------:|--------:|----------------:|
+| 1 | 49.6s | – | 1.00× (baseline) |
+| 2 | 39.3s | 37.2s | 1.33× |
+| 3 | 35.6s | 33.1s | 1.50× |
+| 4 | 39.2s | 34.5s | 1.44× |
+| 6 | 43.0s | **32.1s** | **1.55×** |
+| 8 | – | 36.1s | 1.37× |
 
 **Reading it.** A single movie already saturates all cores (the kernels thread
 over frames), so parallelism only overlaps the not-fully-parallel per-movie work
-(load, alignment, RGB assembly). On this laptop throughput peaks at ~3 workers
-and then *declines*: each movie holds multi-GB float64 intermediates (the
-pow2-padded moving channel is ~512×1024×800 ≈ 3.3 GB, the RGB buffer ~2 GB), so
-several in flight exhaust RAM / memory bandwidth before they exhaust cores.
+(load, alignment, RGB assembly). Throughput is bounded by memory: each movie
+holds large intermediates (the pow2-padded moving channel and the accumulated RGB
+buffer), so several in flight exhaust RAM / memory bandwidth before they exhaust
+cores. Under float64 throughput peaked at ~3 workers then *declined* (6 workers
+was slower than 3). Halving the per-movie memory with float32 lowered every point
+and moved the sweet spot to 6 workers (best 35.6s → 32.1s) — with more headroom,
+more movies fit before the memory wall. This is the memory-bound signature, and
+exactly why cluster nodes with ample RAM/core will scale further.
 
 **Scaling.** File-level parallelism is embarrassingly parallel and the right
 primitive for scale-out. On a machine with ample RAM per core (e.g. a cluster
