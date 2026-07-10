@@ -68,3 +68,19 @@ Set `precision = "double"` for bit-for-bit float64 fidelity. Lower per-movie
 memory both speeds the single-movie path and lets more `--workers` fit in RAM
 before the memory wall — i.e. it raises the laptop sweet spot and improves
 cluster scaling.
+
+## Future work (not yet done)
+
+- **Tighter transform padding.** `zero_pad_images` pads each channel to the next
+  power of two (and its `+0.1` nudge doubles dims that are already powers of two,
+  so a 256×512 channel becomes 512×1024 — a 4× area blow-up). The moving-channel
+  transform (~4s, the top single-movie kernel after cv2) and its bg-sub both run
+  on that oversized canvas. Padding only to a snug margin (content + fitted
+  translation + rotation/scale reach) is an estimated ~2.5–3× cut on those steps
+  (~3s/movie, ~13% of single-movie latency) and a matching drop in that
+  intermediate's memory. **Caveat:** the transform is centred on the image, so
+  the new padding must keep the content exactly centred (even padding per side)
+  to preserve the rotation centre, guarded by a byte-identical output regression
+  test. Flagged; needs a fidelity sign-off before implementing.
+- **GPU (CuPy).** `grey_opening` / `map_coordinates` / FFT have GPU drop-ins;
+  not yet ported.
