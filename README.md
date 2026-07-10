@@ -152,6 +152,9 @@ built to survive an overnight run:
   overlapping the not-fully-parallel per-movie work (load, alignment, RGB
   assembly) across a batch. Independent files only: it's ignored (kept
   sequential) with `--reuse-alignment first`, which has a per-set dependency.
+  Pick `--workers` to fit memory, not just cores (see
+  [docs/benchmarks.md](docs/benchmarks.md)); it's memory-bound on a laptop and
+  scales toward the core count on a high-RAM/core machine.
 
 ```bash
 python run_optomerge.py --channel-order auto --frames 200
