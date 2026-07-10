@@ -86,3 +86,5 @@ norm_exclude = 0.0                     # extra percentile excluded when setting 
 reuse_alignment = "none"               # none | first | <reference file>: reuse layout+transform across the batch
 verbose = false
 dry_run = false                        # list files that would be processed, then exit
+workers = 1                            # movies to process in parallel (1 = sequential); each caps inner
+                                       #   kernel threads to ~cores/workers. Not used with reuse_alignment="first".

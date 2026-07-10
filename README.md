@@ -146,9 +146,16 @@ built to survive an overnight run:
   `--overwrite` is given.
 - **Logged** — a per-batch `run_log.txt` records every file, its fitted
   transform, and a success/failure summary.
+- **Parallel** — `--workers N` processes N movies at once in separate processes,
+  each capping the per-frame kernels to ~`cores/N` threads to avoid
+  oversubscription. A single movie already uses all cores, so the win is
+  overlapping the not-fully-parallel per-movie work (load, alignment, RGB
+  assembly) across a batch. Independent files only: it's ignored (kept
+  sequential) with `--reuse-alignment first`, which has a per-set dependency.
 
 ```bash
 python run_optomerge.py --channel-order auto --frames 200
+python run_optomerge.py --workers 4               # process 4 movies at a time
 python run_optomerge.py --dry-run                 # list files, do nothing
 ```
 

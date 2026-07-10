@@ -214,7 +214,8 @@ def transform_image(
     H, W, N = im.shape
 
     if n_workers is None:
-        n_workers = os.cpu_count() or 1
+        from ._parallel import get_default_workers
+        n_workers = get_default_workers() or os.cpu_count() or 1
 
     # ---- choose backend ----
     use_cv2 = False

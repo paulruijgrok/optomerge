@@ -49,6 +49,7 @@ from .calibration import (
 from .grouping import group_movies, available_modes as grouping_modes
 from .pipeline import MergePipeline
 from .config import Settings
+from ._kernels._parallel import set_default_workers, get_default_workers
 
 __all__ = [
     "Movie", "RawMovie", "RGBMovie",
@@ -64,4 +65,5 @@ __all__ = [
     "group_movies", "grouping_modes",
     "MergePipeline",
     "Settings",
+    "set_default_workers", "get_default_workers",
 ]
