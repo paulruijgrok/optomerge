@@ -23,6 +23,7 @@ from ._kernels.processing import (
     norm_image,
     auto_norm_image,
     subtract_background,
+    subtract_background_windowed,
     crop_channel,
 )
 from ._kernels.registration import calculate_alignment
@@ -31,7 +32,8 @@ from ._kernels.transform import transform_image, zero_pad_images, _next_pow2
 
 __all__ = [
     "load_frames", "get_movie_info", "save_rgb_tiff", "save_tiff",
-    "norm_image", "auto_norm_image", "subtract_background", "crop_channel",
+    "norm_image", "auto_norm_image", "subtract_background",
+    "subtract_background_windowed", "crop_channel",
     "calculate_alignment", "find_channel_bounds",
     "transform_image", "zero_pad_images", "_next_pow2",
 ]

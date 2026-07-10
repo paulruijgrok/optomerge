@@ -62,10 +62,21 @@ def timed(label: str):
 
 # ── main profiling run ───────────────────────────────────────────────────────
 
+def _print_env(settings: Settings) -> None:
+    """Report what actually governs speed: the active kernel backend + threads."""
+    import os
+    from optomerge._kernels.processing import _HAS_CV2
+    print("Environment:")
+    print(f"  background backend : {'cv2 (fast)' if _HAS_CV2 else 'scipy (SLOW -- pip install opencv-python-headless)'}")
+    print(f"  logical CPUs       : {os.cpu_count()}  (kernels thread over frames by default)")
+    print(f"  bg_radius          : {settings.processing.bg_radius}")
+
+
 def profile(src: Path, settings: Settings):
     max_frames = settings.channels.projection_frames
     print(f"\nProfiling: {src.name}")
     print("=" * 64)
+    _print_env(settings)
 
     # 1. Open + realise the movie ------------------------------------------- #
     with timed("1. RawMovie.open + load frames"):
@@ -108,6 +119,29 @@ def profile(src: Path, settings: Settings):
         rgb = RGBMovie.from_channels(channels, transforms, bg_radius=settings.processing.bg_radius)
     out = rgb.to_array()
     print(f"     -> output shape: {out.shape}")
+
+    # 5b. Component breakdown of the merge step (bg-sub vs transform) --------- #
+    # Isolates where the merge time goes and shows the windowed bg-sub win.
+    from optomerge._core import (subtract_background, subtract_background_windowed,
+                                 zero_pad_images)
+    moving = [c for c in channels if not c.reference]
+    if moving:
+        mov = moving[0]
+        ref = next(c for c in channels if c.reference)
+        radius = settings.processing.bg_radius
+        ref_norm = ref.normalized()
+        mov_norm = mov.normalized()
+        mpad, _ = zero_pad_images(mov_norm, ref_norm)
+        mpad = transforms[mov.name].apply(mpad)
+        print("   merge components (moving channel):")
+        with timed("   5b. bg-sub reference (unpadded)"):
+            subtract_background(ref_norm, radius=radius)
+        with timed("   5c. transform moving (padded canvas)"):
+            transforms[mov.name].apply(mpad)
+        with timed("   5d. bg-sub moving FULL (padded canvas)"):
+            subtract_background(mpad, radius=radius)
+        with timed("   5e. bg-sub moving WINDOWED (content bbox)"):
+            subtract_background_windowed(mpad, radius=radius)
 
     # ── Summary ────────────────────────────────────────────────────────────
     total = sum(dt for _, dt in _log)
