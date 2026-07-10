@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Dict, Iterator, List, Optional
 
 import numpy as np
 
-from ._core import subtract_background, subtract_background_windowed, zero_pad_images
+from ._core import subtract_background, zero_pad_images
 from .io_backends import MovieReader, MovieWriter
 
 if TYPE_CHECKING:
@@ -237,11 +237,7 @@ class RGBMovie(Movie):
             # Zero-pad the moving/reference pair exactly as the original code.
             mov_arr, ref_arr = zero_pad_images(mov_arr, ref_arr)
             mov_arr = transforms[mov.name].apply(mov_arr)
-            # Windowed bg-sub: the transform leaves most of the padded canvas
-            # zero, so subtract the background only on the content bounding box
-            # (bit-identical for morph_open; skips the empty border, the pipeline
-            # hotspot). See subtract_background_windowed.
-            mov_arr = subtract_background_windowed(mov_arr, radius=bg_radius)
+            mov_arr = subtract_background(mov_arr, radius=bg_radius)
             prepared.append((mov.color, mov_arr))
             masks_for_crop = [ref_arr, mov_arr]
         elif len(moving) > 1:
@@ -251,7 +247,7 @@ class RGBMovie(Movie):
             ref_arr = arrays[0]
             for mov, marr in zip(moving, arrays[1:]):
                 marr = transforms[mov.name].apply(marr)
-                marr = subtract_background_windowed(marr, radius=bg_radius)
+                marr = subtract_background(marr, radius=bg_radius)
                 prepared.append((mov.color, marr))
             masks_for_crop = [ref_arr] + [a for _, a in prepared]
 

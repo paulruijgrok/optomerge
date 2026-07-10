@@ -316,62 +316,6 @@ def subtract_background(
     return result
 
 
-def subtract_background_windowed(
-    movie: np.ndarray,
-    radius: int = 10,
-    method: str = "morph_open",
-    **kwargs,
-) -> np.ndarray:
-    """:func:`subtract_background` restricted to the non-zero content window.
-
-    In the merge path the moving channel is zero-padded to a large canvas (for
-    the transform) before its background is subtracted, so the morphological
-    opening runs over a mostly-empty frame -- the dominant cost in the pipeline.
-    Background subtraction is *spatially local*, so this computes it only on the
-    bounding box of the non-zero content (expanded by the operator's support
-    radius) and leaves the surrounding zeros untouched.
-
-    For ``method="morph_open"`` the result is **bit-identical** to
-    :func:`subtract_background`: a grey opening (erosion then dilation, each with
-    a disk of radius *radius*) makes each output pixel depend only on inputs
-    within ``2*radius``, and opening a zero region yields zeros. The window is
-    expanded by ``2*radius`` so every content pixel sees its full neighbourhood.
-    For ``method="gaussian"`` the border is widened to ``ceil(4*radius)`` (~4σ),
-    beyond which the Gaussian tail is negligible.
-
-    Parameters mirror :func:`subtract_background`; ``kwargs`` (``n_workers``,
-    ``backend``, ``progress``) are forwarded.
-
-    Returns
-    -------
-    np.ndarray, same shape/dtype convention as :func:`subtract_background`.
-    """
-    movie = np.asarray(movie, dtype=np.float64)
-    single_frame = movie.ndim == 2
-    if single_frame:
-        movie = movie[:, :, np.newaxis]
-
-    H, W, _ = movie.shape
-    content = np.any(movie != 0.0, axis=2)
-    out = np.zeros_like(movie)
-    if content.any():
-        border = int(np.ceil(4 * radius)) if method == "gaussian" else 2 * int(radius)
-        rows = np.where(content.any(axis=1))[0]
-        cols = np.where(content.any(axis=0))[0]
-        r0 = max(0, int(rows[0]) - border)
-        r1 = min(H - 1, int(rows[-1]) + border)
-        c0 = max(0, int(cols[0]) - border)
-        c1 = min(W - 1, int(cols[-1]) + border)
-        window = movie[r0:r1 + 1, c0:c1 + 1, :]
-        out[r0:r1 + 1, c0:c1 + 1, :] = subtract_background(
-            window, radius=radius, method=method, **kwargs
-        )
-
-    if single_frame:
-        out = out[:, :, 0]
-    return out
-
-
 # ---------------------------------------------------------------------------
 # Channel cropping
 # ---------------------------------------------------------------------------

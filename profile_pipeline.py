@@ -121,9 +121,8 @@ def profile(src: Path, settings: Settings):
     print(f"     -> output shape: {out.shape}")
 
     # 5b. Component breakdown of the merge step (bg-sub vs transform) --------- #
-    # Isolates where the merge time goes and shows the windowed bg-sub win.
-    from optomerge._core import (subtract_background, subtract_background_windowed,
-                                 zero_pad_images)
+    # Isolates where the merge time goes: background subtraction vs the transform.
+    from optomerge._core import subtract_background, zero_pad_images
     moving = [c for c in channels if not c.reference]
     if moving:
         mov = moving[0]
@@ -138,10 +137,8 @@ def profile(src: Path, settings: Settings):
             subtract_background(ref_norm, radius=radius)
         with timed("   5c. transform moving (padded canvas)"):
             transforms[mov.name].apply(mpad)
-        with timed("   5d. bg-sub moving FULL (padded canvas)"):
+        with timed("   5d. bg-sub moving (padded canvas)"):
             subtract_background(mpad, radius=radius)
-        with timed("   5e. bg-sub moving WINDOWED (content bbox)"):
-            subtract_background_windowed(mpad, radius=radius)
 
     # ── Summary ────────────────────────────────────────────────────────────
     total = sum(dt for _, dt in _log)
