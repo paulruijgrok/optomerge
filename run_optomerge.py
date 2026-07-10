@@ -124,6 +124,9 @@ _CLI_TO_FIELD = {
     "use_scrub": "use_scrub", "upscale": "upscale", "max_shift": "max_shift",
     "fit_scale_rotation": "fit_scale_rotation", "align_method": "method",
     "deweight_stuck": "deweight_stuck",
+    "fit_rotation": "fit_rotation", "fit_scale": "fit_scale",
+    "feature_rotation_max_deg": "feature_rotation_max_deg",
+    "feature_scale_max_pct": "feature_scale_max_pct",
     "calibration_mode": "mode",
     "group_by": "by", "group_token": "token_pattern",
     "reuse_alignment": "reuse_alignment", "verbose": "verbose", "dry_run": "dry_run",
@@ -309,6 +312,18 @@ def main() -> None:
     parser.add_argument("--deweight-stuck", action="store_true", default=S,
                         dest="deweight_stuck",
                         help="(feature) down-weight stuck objects (count once, not per-frame)")
+    parser.add_argument("--fit-rotation", action="store_true", default=S,
+                        dest="fit_rotation",
+                        help="(feature) also fit a small bounded rotation between channels")
+    parser.add_argument("--fit-scale", action="store_true", default=S,
+                        dest="fit_scale",
+                        help="(feature) also fit a small bounded isotropic scale between channels")
+    parser.add_argument("--rotation-max-deg", type=float, default=S, metavar="DEG",
+                        dest="feature_rotation_max_deg",
+                        help="(feature) bound on the rotation search (degrees; default 2)")
+    parser.add_argument("--scale-max-pct", type=float, default=S, metavar="PCT",
+                        dest="feature_scale_max_pct",
+                        help="(feature) bound on the scale search (percent; default 2)")
     parser.add_argument("--robust", action="store_const", const="robust", default=S,
                         dest="calibration_mode",
                         help="use the robust best-of-N calibrator")

@@ -215,10 +215,12 @@ The `--feature` diagnostic run writes `diag_06`, a per-frame overlay of the
 detected heads and filament outline, for exactly this tuning.
 
 See [docs/feature_registration.md](docs/feature_registration.md) for the full
-algorithm, parameter reference, and the roadmap (constrained rotation/scale next,
-plus general-purpose aligners for the wider OptoSplit community). This is the first tailored algorithm behind the `Aligner` seam;
-it is opt-in and does not change the default `phase` behaviour. Current scope:
-translation only — rotation/scale and richer detectors are future work.
+algorithm, parameter reference, and the roadmap (anisotropic scale and
+general-purpose aligners for the wider OptoSplit community). This is the first
+tailored algorithm behind the `Aligner` seam; it is opt-in and does not change the
+default `phase` behaviour. It fits translation by default; a small, tightly-bounded
+rotation and isotropic scale can be layered on with `--fit-rotation` / `--fit-scale`
+for movies with a field-dependent residual.
 
 ### Configuration & run provenance
 

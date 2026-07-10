@@ -39,6 +39,26 @@ Because the head is on the filament in *every* frame, that distance goes to zero
 at the correct registration regardless of where along the filament the head sits
 — so it is robust to tip- vs mid-filament labels.
 
+### Rotation + scale (opt-in)
+
+Translation alone is the robust first cut, but some movies show a
+*field-dependent* residual — heads that land well near the image centre but drift
+off toward one edge. That is the signature of a small **optical rotation/scale**
+between the two OptoSplit halves, which no single translation can remove.
+
+Enabling `fit_rotation` and/or `fit_scale` layers a small, tightly-bounded
+rotation and isotropic scale **on top of** the translation fit: the translation
+optimum seeds a bounded local search (Nelder–Mead) that jointly re-refines
+`(t1, t2, rot, s)` against the *same* robust distance objective, but sampled with
+bilinear interpolation so the cost is smooth in the continuous rotation/scale
+parameters. The search is confined to `±rotation_max_deg` and `±scale_max_pct`
+(default ±2° / ±2%) so the extra degrees of freedom cannot over-fit — the reason
+this is viable here, where it was not in the phase-correlation aligner, is that
+the objective is a geometric head-to-filament distance rather than an image
+cross-correlation, which the extra freedom would happily over-fit. Scale is
+isotropic (`s1 == s2`); anisotropic scale is left as future work. Both toggles
+are off by default, so the default behaviour is unchanged (pure translation).
+
 ### Robustness
 
 - **Orphan heads** — a head with no filament nearby (a red-only object, or a
@@ -65,6 +85,13 @@ at the correct registration regardless of where along the filament the head sits
 | `distance_cap` | 6.0 | orphan-head robustness threshold (px); also the inlier threshold for the score |
 | `deweight_stuck` | false | weight heads by 1/persistence so stuck objects count once |
 | `stuck_radius` | 2.0 | px within which cross-frame detections are the same stuck object |
+| `fit_rotation` | false | also fit a small bounded rotation, layered on the translation fit |
+| `fit_scale` | false | also fit a small bounded isotropic scale, layered on the translation fit |
+| `feature_rotation_max_deg` | 2.0 | rotation search bound (deg); `\|rot\| ≤ this` |
+| `feature_scale_max_pct` | 2.0 | isotropic scale search bound (percent); `\|s − 1\|·100 ≤ this` |
+
+CLI shortcuts: `--fit-rotation`, `--fit-scale`, `--rotation-max-deg DEG`,
+`--scale-max-pct PCT` (both `run_optomerge.py` and `test_pipeline.py`).
 
 ## Diagnostics
 
@@ -83,17 +110,20 @@ fitted `t` is exactly the value the pipeline applies. The end-to-end test
 (`test_end_to_end_recovers_shift`) guards this by applying the real transform and
 asserting the head lands on the filament.
 
+For rotation/scale the same holds in centred coordinates: a head at source `s`
+lands at `M⁻¹(s − t)` with `M = [[cos·s1, −sin·s2], [sin·s1, cos·s2]]` about the
+image centre `(W/2−0.5, H/2−0.5)`, matching the matrix `transform_image` builds.
+`test_affine_distance_matches_transform_image_landing` guards this by checking the
+predicted landing against where `transform_image` actually moves a head, for
+several rotation/anisotropic-scale/translation combinations.
+
 ## Roadmap / future work
 
-- **Constrained rotation + scale.** Translation-only leaves a *field-dependent*
-  residual on some movies (worse toward one edge), the signature of a small
-  optical rotation/scale between the two OptoSplit halves that a single
-  translation cannot remove. The next development step is to extend the search to
-  a small, bounded rotation/scale on top of the same robust distance metric —
-  seeded from the translation fit and tightly bounded (e.g. ±1–2°, ±2%). Because
-  the objective is head-to-filament distance rather than image cross-correlation,
-  the extra degrees of freedom are far less prone to the over-fitting that made
-  us pin rotation/scale in the phase-correlation aligner.
+- **Anisotropic scale.** Rotation + *isotropic* scale are implemented (see
+  "Rotation + scale" above). A residual that differs between the two axes would
+  need independent `s1`/`s2`; the objective and warp already support it, so this
+  is a matter of exposing a second scale degree of freedom (and a bound) and
+  guarding against the extra over-fitting risk.
 - **Better detectors.** Detection is deliberately simple (threshold + connected
   components). The downstream FASTrack package has stronger object/filament
   detection that could be borrowed for hard movies (faint filaments, dense
