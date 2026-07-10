@@ -48,6 +48,16 @@ is kept sequential (per-set dependency) and is not parallelised.
 
 **Guidance.** Pick `--workers` to fit memory, not just cores: on a RAM-limited
 laptop a few workers is the sweet spot; on a high-memory node scale toward the
-core count. Reducing the per-movie memory footprint (float32 intermediates,
-tighter transform padding) would raise the laptop sweet spot *and* speed the
-single-movie path — the planned next step.
+core count.
+
+## Merge precision (float32)
+
+The merge runs in **float32** by default (`[processing].precision = "single"`),
+halving its multi-GB intermediates and the accumulated RGB buffer vs float64.
+This is effectively free: cv2 already computes in float32 internally and the
+output is 8-/16-bit, so the rendered result is unchanged (the 8-bit render is
+byte-identical to the float64 path in tests). Calibration/alignment stay float64.
+Set `precision = "double"` for bit-for-bit float64 fidelity. Lower per-movie
+memory both speeds the single-movie path and lets more `--workers` fit in RAM
+before the memory wall — i.e. it raises the laptop sweet spot and improves
+cluster scaling.

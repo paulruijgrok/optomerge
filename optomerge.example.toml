@@ -81,6 +81,7 @@ bg_radius = 10                         # background-subtraction structuring-elem
 bunch_size = 100                       # frames held/processed per block (caps memory; ~100 like MATLAB)
 norm_projection = "max"                # projection for normalisation limits: max (avoids saturating moving filaments) | mean
 norm_exclude = 0.0                     # extra percentile excluded when setting limits (0 = min/max after median-despeckle)
+precision = "single"                   # merge working/output precision: single (float32, halves merge memory) | double (float64)
 
 [runtime]
 reuse_alignment = "none"               # none | first | <reference file>: reuse layout+transform across the batch

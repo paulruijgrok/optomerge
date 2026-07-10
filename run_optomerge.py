@@ -188,6 +188,7 @@ def process_file(
     norm_from_max: bool = True,
     norm_exclude: float = 0.0,
     rgb_bitdepth: int = 8,
+    precision: str = "single",
 ) -> dict:
     """Calibrate, gate on acceptance, then merge one file.
 
@@ -210,7 +211,7 @@ def process_file(
                   if shared is not None else calibrator)
         pipe = MergePipeline(source=src, calibrator=active, bunch_size=bunch_size,
                              bg_radius=bg_radius, projection_frames=projection_frames,
-                             verbose=verbose, rgb_bitdepth=rgb_bitdepth)
+                             verbose=verbose, rgb_bitdepth=rgb_bitdepth, precision=precision)
 
         movie = RawMovie.open(src)
         try:
@@ -299,6 +300,7 @@ def _build_pf_kwargs(settings, calibrator, logger) -> dict:
         norm_from_max=settings.processing.norm_projection == "max",
         norm_exclude=settings.processing.norm_exclude,
         rgb_bitdepth=settings.io.rgb_bitdepth,
+        precision=settings.processing.precision,
     )
 
 

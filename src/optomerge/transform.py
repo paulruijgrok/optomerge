@@ -76,7 +76,10 @@ class Transform:
         override only this method.
         """
         if self.is_identity:
-            return np.asarray(image, dtype=np.float64)
+            image = np.asarray(image)
+            if np.issubdtype(image.dtype, np.floating):
+                return image
+            return image.astype(np.float64)
         return transform_image(image, self.rot, self.s1, self.s2, self.t1, self.t2)
 
     def rescaled(self, factor: float) -> "Transform":

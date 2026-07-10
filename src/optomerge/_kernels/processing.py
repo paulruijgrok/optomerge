@@ -35,6 +35,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 
+from ._util import _as_float
+
 
 # ---------------------------------------------------------------------------
 # OpenCV availability probe
@@ -250,9 +252,10 @@ def subtract_background(
     -----
     The cv2 backend operates in float32 internally.  The maximum rounding
     error vs float64 is < 6 × 10⁻⁸ for [0, 1]-normalised images.
-    The output is always float64.
+    The output preserves the input floating dtype (float32 stays float32, to
+    halve memory in the merge); non-floating input is promoted to float64.
     """
-    movie = np.asarray(movie, dtype=np.float64)
+    movie = _as_float(movie)
     single_frame = movie.ndim == 2
     if single_frame:
         movie = movie[:, :, np.newaxis]

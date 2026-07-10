@@ -35,6 +35,8 @@ from typing import Tuple
 
 import numpy as np
 
+from ._util import _as_float
+
 
 # ---------------------------------------------------------------------------
 # OpenCV availability probe
@@ -206,7 +208,7 @@ def transform_image(
     vs float64 is < 6 × 10⁻⁸ for images normalised to [0, 1], which is orders
     of magnitude below 16-bit detector noise).  The output is always float64.
     """
-    im = np.asarray(im, dtype=np.float64)
+    im = _as_float(im)
     single_frame = im.ndim == 2
     if single_frame:
         im = im[:, :, np.newaxis]
@@ -331,8 +333,9 @@ def zero_pad_images(
     nim1, nim2 : np.ndarray
         Zero-padded images of equal shape.
     """
-    im1 = np.asarray(im1, dtype=np.float64)
-    im2 = np.asarray(im2, dtype=np.float64)
+    im1 = _as_float(im1)
+    im2 = _as_float(im2)
+    dtype = np.result_type(im1.dtype, im2.dtype)  # preserve float32 (halves memory)
 
     if im1.ndim == 2:
         H1, W1 = im1.shape
@@ -346,11 +349,11 @@ def zero_pad_images(
     new_W = _next_pow2(max(W1, W2))
 
     if N is None:
-        nim1 = np.zeros((new_H, new_W), dtype=np.float64)
-        nim2 = np.zeros((new_H, new_W), dtype=np.float64)
+        nim1 = np.zeros((new_H, new_W), dtype=dtype)
+        nim2 = np.zeros((new_H, new_W), dtype=dtype)
     else:
-        nim1 = np.zeros((new_H, new_W, N), dtype=np.float64)
-        nim2 = np.zeros((new_H, new_W, N), dtype=np.float64)
+        nim1 = np.zeros((new_H, new_W, N), dtype=dtype)
+        nim2 = np.zeros((new_H, new_W, N), dtype=dtype)
 
     r1 = (new_H - H1) // 2
     c1 = (new_W - W1) // 2
