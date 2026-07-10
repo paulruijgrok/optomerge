@@ -37,11 +37,15 @@ the repo without installing will fail with "Cannot import optomerge").
 ### Requirements
 
 - Python 3.9+ (developed and tested on 3.11)
-- `numpy`, `scipy`, `scikit-image`, `tifffile` (installed automatically)
+- `numpy`, `scipy`, `scikit-image`, `tifffile`, `opencv-python-headless`
+  (installed automatically). OpenCV is the fast backend for background
+  subtraction and the affine transform — ~5–20× faster than the scipy fallback
+  on the dominant step — so it ships by default; the code still runs without it
+  (a one-time warning points this out) via the scipy path.
 - `tomli` — installed automatically only on Python 3.9/3.10, to read TOML config
   files (Python 3.11+ uses the standard-library `tomllib` instead)
-- Optional extras: `matplotlib` + `pytest` via the `[dev]` extra, and
-  `opencv-python` for a faster warp/blur backend via the `[cv2]` extra
+- Optional extras: `matplotlib` + `pytest` via the `[dev]` extra. The `[cv2]`
+  extra is kept as a back-compat alias for the now-default OpenCV dependency.
 
 ### Step-by-step setup
 
@@ -68,8 +72,8 @@ If you are new to Python environments, follow these in order from a terminal:
    ```bash
    pip install -e ".[dev]"               # editable install + matplotlib/pytest
    ```
-   Use `pip install -e .` if you don't need the diagnostic plots or test suite,
-   or `pip install -e ".[dev,cv2]"` to also get the faster OpenCV backend.
+   Use `pip install -e .` if you don't need the diagnostic plots or test suite;
+   the fast OpenCV backend is included by default either way.
 5. **Check it worked** (optional but recommended):
    ```bash
    python -c "import optomerge; print(optomerge.__file__)"   # prints a src/optomerge path
