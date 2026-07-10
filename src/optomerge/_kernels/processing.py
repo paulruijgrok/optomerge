@@ -30,9 +30,12 @@ Backend selection
 from __future__ import annotations
 
 import os
+import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
+
+from ._util import _as_float
 
 
 # ---------------------------------------------------------------------------
@@ -45,6 +48,31 @@ try:
 except ImportError:
     _cv2 = None                 # type: ignore
     _HAS_CV2 = False
+
+#: Emit the "install OpenCV for a big speedup" notice at most once per process.
+_WARNED_NO_CV2 = False
+
+
+def _warn_missing_cv2_once() -> None:
+    """One-time performance warning when the slow scipy backend is auto-selected.
+
+    OpenCV is an optional dependency (``pip install optomerge[cv2]``) but makes
+    the background-subtraction / transform kernels ~5-20x faster on the morph
+    path. We warn once, and only on the auto backend, so users on the slow path
+    know there is a free speedup available -- without nagging those who chose
+    scipy deliberately (``backend="scipy"``).
+    """
+    global _WARNED_NO_CV2
+    if _WARNED_NO_CV2:
+        return
+    _WARNED_NO_CV2 = True
+    warnings.warn(
+        "OpenCV (cv2) not found -- using the slower scipy background-subtraction "
+        "backend. Installing it (pip install opencv-python-headless, or "
+        "optomerge[cv2]) typically speeds the dominant step up by 5-20x.",
+        RuntimeWarning,
+        stacklevel=3,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -224,9 +252,10 @@ def subtract_background(
     -----
     The cv2 backend operates in float32 internally.  The maximum rounding
     error vs float64 is < 6 × 10⁻⁸ for [0, 1]-normalised images.
-    The output is always float64.
+    The output preserves the input floating dtype (float32 stays float32, to
+    halve memory in the merge); non-floating input is promoted to float64.
     """
-    movie = np.asarray(movie, dtype=np.float64)
+    movie = _as_float(movie)
     single_frame = movie.ndim == 2
     if single_frame:
         movie = movie[:, :, np.newaxis]
@@ -235,11 +264,14 @@ def subtract_background(
     result = np.zeros_like(movie)
 
     if n_workers is None:
-        n_workers = os.cpu_count() or 1
+        from ._parallel import get_default_workers
+        n_workers = get_default_workers() or os.cpu_count() or 1
 
     # ---- choose backend ----
     if backend == "auto":
         use_cv2 = _HAS_CV2
+        if not use_cv2 and n_frames > 1:
+            _warn_missing_cv2_once()
     elif backend == "cv2":
         if not _HAS_CV2:
             raise ImportError(

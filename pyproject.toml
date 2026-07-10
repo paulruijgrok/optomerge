@@ -16,12 +16,19 @@ dependencies = [
     "scipy>=1.9",
     "scikit-image>=0.19",
     "tifffile>=2022.5",
+    # OpenCV is the fast backend for background subtraction + the affine
+    # transform (~5-20x vs the scipy fallback on the dominant step), so it ships
+    # by default. The headless build avoids GUI system libraries (safe on
+    # servers/CI). The optomerge code still runs without it via the scipy path.
+    "opencv-python-headless>=4.5",
     "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest", "matplotlib"]
-cv2 = ["opencv-python>=4.5"]
+# Back-compat alias: OpenCV is now a core dependency (see above). Kept so that
+# `optomerge[cv2]` still resolves; installs the same headless build.
+cv2 = ["opencv-python-headless>=4.5"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -120,6 +120,12 @@ class ProcessingSettings:
     #: 0 = plain min/max after median-despeckle (keeps sparse features like heads);
     #: raise only if a channel still has outliers the median missed.
     norm_exclude: float = 0.0
+    #: Merge working/output precision: "single" (float32, default -- halves the
+    #: merge's multi-GB intermediates + RGB buffer, negligible vs float64 since
+    #: cv2 computes in float32 and output is 8-/16-bit) or "double" (float64,
+    #: bit-for-bit fidelity with the reference). Calibration/alignment stay
+    #: float64 either way.
+    precision: str = "single"
 
 
 @dataclass
@@ -175,6 +181,12 @@ class RuntimeSettings:
     verbose: bool = False
     #: List the files that would be processed, then exit without doing work.
     dry_run: bool = False
+    #: Number of movies to process in parallel *processes* in the batch runner
+    #: (1 = sequential, the default). Each worker caps the per-frame kernels'
+    #: inner threads to ~cores/workers to avoid oversubscription. Speeds up
+    #: batches by overlapping the not-fully-parallel per-movie work (load,
+    #: alignment, RGB assembly); a single movie already uses all cores.
+    workers: int = 1
 
 
 _SECTIONS = {

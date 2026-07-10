@@ -66,6 +66,7 @@ class MergePipeline:
         calibrator: Optional[Calibrator] = None,
         criteria: Optional[AcceptanceCriteria] = None,
         rgb_bitdepth: int = 8,
+        precision: str = "single",
     ) -> None:
         self.source = Path(source)
         self.layout = layout or ChannelLayout.auto()
@@ -76,6 +77,9 @@ class MergePipeline:
         self.verbose = verbose
         self.criteria = criteria
         self.rgb_bitdepth = rgb_bitdepth
+        # Working/output precision for the merge: "single" (float32, default,
+        # halves the merge's memory) or "double" (float64, bit-for-bit fidelity).
+        self.merge_dtype = np.float32 if precision == "single" else np.float64
         self.calibrator = calibrator or SingleProjectionCalibrator(
             layout=self.layout, aligner=self.aligner,
             projection_frames=projection_frames, criteria=criteria, verbose=verbose,
@@ -165,6 +169,7 @@ class MergePipeline:
                 bg_radius=self.bg_radius,
                 blue_led_frames=led_slice,
                 pixel_size=movie.pixel_size,
+                dtype=self.merge_dtype,
             )
             crop_range = rgb.crop_range  # lock crop range after the first bunch
             rgb_blocks.append(rgb.to_array())

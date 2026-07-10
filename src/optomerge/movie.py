@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Dict, Iterator, List, Optional
 import numpy as np
 
 from ._core import subtract_background, zero_pad_images
+from ._kernels._util import _as_float
 from .io_backends import MovieReader, MovieWriter
 
 if TYPE_CHECKING:
@@ -58,7 +59,9 @@ class Movie(ABC):
         if reader is None and data is None:
             raise ValueError("Movie needs either a reader or data.")
         self._reader = reader
-        self._data = None if data is None else np.asarray(data, dtype=np.float64)
+        # Preserve the floating dtype (float32 stays float32 to halve RGB-movie
+        # memory); non-floating data is promoted to float64.
+        self._data = None if data is None else _as_float(np.asarray(data))
         self.pixel_size = pixel_size
 
     # -- shape / access ---------------------------------------------------- #
@@ -209,6 +212,7 @@ class RGBMovie(Movie):
         n_colors: int = 3,
         blue_led_frames: Optional[np.ndarray] = None,
         pixel_size: Optional[float] = None,
+        dtype: np.dtype = np.float32,
     ) -> "RGBMovie":
         """Assemble an output movie from aligned channels.
 
@@ -221,19 +225,27 @@ class RGBMovie(Movie):
         reproduces the original pipeline arithmetic (normalise -> reference bg
         subtract -> zero-pad pair -> transform moving -> moving bg subtract ->
         intersect-threshold crop -> place in colour planes).
+
+        ``dtype`` is the working/output precision. It defaults to ``float32``,
+        which halves the merge's multi-GB intermediates and RGB buffer for a
+        negligible change vs float64 (cv2 already computes in float32 internally,
+        and the output is 8-/16-bit); pass ``float64`` for bit-for-bit fidelity
+        with the reference. The kernels preserve this dtype end to end.
         """
+        work = np.dtype(dtype)
         reference = next((c for c in channels if c.reference), channels[0])
         moving = [c for c in channels if not c.reference]
 
-        # Reference: normalise then background-subtract.
-        ref_arr = subtract_background(reference.normalized(), radius=bg_radius)
+        # Reference: normalise then background-subtract (in the working dtype).
+        ref_arr = subtract_background(reference.normalized().astype(work, copy=False),
+                                      radius=bg_radius)
 
         prepared: List[tuple] = []  # (color, array) for each moving channel
         masks_for_crop = [ref_arr]
 
         if len(moving) == 1:
             mov = moving[0]
-            mov_arr = mov.normalized()
+            mov_arr = mov.normalized().astype(work, copy=False)
             # Zero-pad the moving/reference pair exactly as the original code.
             mov_arr, ref_arr = zero_pad_images(mov_arr, ref_arr)
             mov_arr = transforms[mov.name].apply(mov_arr)
@@ -242,7 +254,7 @@ class RGBMovie(Movie):
             masks_for_crop = [ref_arr, mov_arr]
         elif len(moving) > 1:
             # Generalised path: pad all channels to a common power-of-2 size.
-            arrays = [ref_arr] + [m.normalized() for m in moving]
+            arrays = [ref_arr] + [m.normalized().astype(work, copy=False) for m in moving]
             arrays = _zero_pad_many(arrays)
             ref_arr = arrays[0]
             for mov, marr in zip(moving, arrays[1:]):
@@ -259,7 +271,7 @@ class RGBMovie(Movie):
         ref_crop = ref_arr[rb:re + 1, cb:ce + 1, :]
         Hc, Wc, num_frames = ref_crop.shape
 
-        rgb = np.zeros((Hc, Wc, n_colors, num_frames), dtype=np.float64)
+        rgb = np.zeros((Hc, Wc, n_colors, num_frames), dtype=work)
         rgb[:, :, _COLOR_INDEX[reference.color], :] = ref_crop
         for color, arr in prepared:
             rgb[:, :, _COLOR_INDEX[color], :] = arr[rb:re + 1, cb:ce + 1, :]
@@ -300,10 +312,11 @@ def _zero_pad_many(arrays: List[np.ndarray]) -> List[np.ndarray]:
     n = arrays[0].shape[2]
     new_H = _next_pow2(max(a.shape[0] for a in arrays))
     new_W = _next_pow2(max(a.shape[1] for a in arrays))
+    dtype = np.result_type(*[a.dtype for a in arrays])  # preserve float32
     out = []
     for a in arrays:
         H, W, _ = a.shape
-        padded = np.zeros((new_H, new_W, n), dtype=np.float64)
+        padded = np.zeros((new_H, new_W, n), dtype=dtype)
         r = (new_H - H) // 2
         c = (new_W - W) // 2
         padded[r:r + H, c:c + W, :] = a

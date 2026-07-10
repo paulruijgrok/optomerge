@@ -37,11 +37,15 @@ the repo without installing will fail with "Cannot import optomerge").
 ### Requirements
 
 - Python 3.9+ (developed and tested on 3.11)
-- `numpy`, `scipy`, `scikit-image`, `tifffile` (installed automatically)
+- `numpy`, `scipy`, `scikit-image`, `tifffile`, `opencv-python-headless`
+  (installed automatically). OpenCV is the fast backend for background
+  subtraction and the affine transform — ~5–20× faster than the scipy fallback
+  on the dominant step — so it ships by default; the code still runs without it
+  (a one-time warning points this out) via the scipy path.
 - `tomli` — installed automatically only on Python 3.9/3.10, to read TOML config
   files (Python 3.11+ uses the standard-library `tomllib` instead)
-- Optional extras: `matplotlib` + `pytest` via the `[dev]` extra, and
-  `opencv-python` for a faster warp/blur backend via the `[cv2]` extra
+- Optional extras: `matplotlib` + `pytest` via the `[dev]` extra. The `[cv2]`
+  extra is kept as a back-compat alias for the now-default OpenCV dependency.
 
 ### Step-by-step setup
 
@@ -68,8 +72,8 @@ If you are new to Python environments, follow these in order from a terminal:
    ```bash
    pip install -e ".[dev]"               # editable install + matplotlib/pytest
    ```
-   Use `pip install -e .` if you don't need the diagnostic plots or test suite,
-   or `pip install -e ".[dev,cv2]"` to also get the faster OpenCV backend.
+   Use `pip install -e .` if you don't need the diagnostic plots or test suite;
+   the fast OpenCV backend is included by default either way.
 5. **Check it worked** (optional but recommended):
    ```bash
    python -c "import optomerge; print(optomerge.__file__)"   # prints a src/optomerge path
@@ -142,9 +146,19 @@ built to survive an overnight run:
   `--overwrite` is given.
 - **Logged** — a per-batch `run_log.txt` records every file, its fitted
   transform, and a success/failure summary.
+- **Parallel** — `--workers N` processes N movies at once in separate processes,
+  each capping the per-frame kernels to ~`cores/N` threads to avoid
+  oversubscription. A single movie already uses all cores, so the win is
+  overlapping the not-fully-parallel per-movie work (load, alignment, RGB
+  assembly) across a batch. Independent files only: it's ignored (kept
+  sequential) with `--reuse-alignment first`, which has a per-set dependency.
+  Pick `--workers` to fit memory, not just cores (see
+  [docs/benchmarks.md](docs/benchmarks.md)); it's memory-bound on a laptop and
+  scales toward the core count on a high-RAM/core machine.
 
 ```bash
 python run_optomerge.py --channel-order auto --frames 200
+python run_optomerge.py --workers 4               # process 4 movies at a time
 python run_optomerge.py --dry-run                 # list files, do nothing
 ```
 

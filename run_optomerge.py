@@ -72,6 +72,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 import traceback
@@ -130,6 +131,7 @@ _CLI_TO_FIELD = {
     "calibration_mode": "mode",
     "group_by": "by", "group_token": "token_pattern",
     "reuse_alignment": "reuse_alignment", "verbose": "verbose", "dry_run": "dry_run",
+    "workers": "workers",
 }
 
 
@@ -186,6 +188,7 @@ def process_file(
     norm_from_max: bool = True,
     norm_exclude: float = 0.0,
     rgb_bitdepth: int = 8,
+    precision: str = "single",
 ) -> dict:
     """Calibrate, gate on acceptance, then merge one file.
 
@@ -208,7 +211,7 @@ def process_file(
                   if shared is not None else calibrator)
         pipe = MergePipeline(source=src, calibrator=active, bunch_size=bunch_size,
                              bg_radius=bg_radius, projection_frames=projection_frames,
-                             verbose=verbose, rgb_bitdepth=rgb_bitdepth)
+                             verbose=verbose, rgb_bitdepth=rgb_bitdepth, precision=precision)
 
         movie = RawMovie.open(src)
         try:
@@ -260,6 +263,97 @@ def _calibrate_reference(path: Path, calibrator, logger: logging.Logger) -> "Cal
     """Compute a predetermined reference calibration from a movie file."""
     logger.info(f"  Computing predetermined alignment from: {path.name}")
     return calibrator.calibrate(RawMovie.open(path))
+
+
+# ---------------------------------------------------------------------------
+# Parallel (file-level) processing
+# ---------------------------------------------------------------------------
+
+class _ListLogger:
+    """Minimal logger stand-in that captures records for later replay.
+
+    ``ProcessPoolExecutor`` workers cannot share the parent's file-handler
+    logger, so each worker logs into one of these and the parent replays the
+    lines (in order, grouped per file) once the worker returns.
+    """
+
+    def __init__(self) -> None:
+        self.lines: list[tuple[str, str]] = []
+
+    def info(self, msg: str) -> None:
+        self.lines.append(("info", msg))
+
+    def warning(self, msg: str) -> None:
+        self.lines.append(("warning", msg))
+
+    def error(self, msg: str) -> None:
+        self.lines.append(("error", msg))
+
+
+def _build_pf_kwargs(settings, calibrator, logger) -> dict:
+    """Assemble the keyword arguments :func:`process_file` needs from settings."""
+    return dict(
+        calibrator=calibrator, bunch_size=settings.processing.bunch_size,
+        bg_radius=settings.processing.bg_radius,
+        projection_frames=settings.channels.projection_frames,
+        verbose=settings.runtime.verbose, logger=logger,
+        norm_from_max=settings.processing.norm_projection == "max",
+        norm_exclude=settings.processing.norm_exclude,
+        rgb_bitdepth=settings.io.rgb_bitdepth,
+        precision=settings.processing.precision,
+    )
+
+
+def _cap_worker_threads(thread_cap: int):
+    """Bound every layer of threading in a worker to ~``thread_cap`` cores.
+
+    Critical for parallel workers: the kernels have three nested sources of
+    threads, and only capping ours leaves the others oversubscribing --
+    ``workers`` processes each spawning cv2/BLAS threads across *all* cores
+    thrashes (measured: per-movie time 5x worse, no batch speedup). So:
+
+    * cv2 (the warp/morph backend) -> 1 thread per op (``cv2.setNumThreads``);
+    * BLAS/OpenMP (numpy/scipy) -> ``thread_cap`` via threadpoolctl if present;
+    * our per-frame ``ThreadPoolExecutor`` -> ``thread_cap`` (the frame-level
+      parallelism that actually fills this worker's core share).
+
+    Returns a context manager for the BLAS limit (a no-op if threadpoolctl is
+    absent), to be held open for the duration of the work.
+    """
+    import contextlib
+
+    from optomerge import set_default_workers
+    try:
+        import cv2
+        cv2.setNumThreads(1)
+    except Exception:  # pragma: no cover - cv2 optional
+        pass
+    set_default_workers(thread_cap)
+    try:
+        from threadpoolctl import threadpool_limits
+        return threadpool_limits(limits=thread_cap)
+    except Exception:  # pragma: no cover - threadpoolctl optional
+        return contextlib.nullcontext()
+
+
+def _process_one(job: tuple) -> dict:
+    """Worker entry point: process one movie in an isolated process.
+
+    ``job`` is ``(settings, src, dst, shared, thread_cap)``, all picklable.
+    Caps all threading layers to ``thread_cap`` (see :func:`_cap_worker_threads`)
+    so ``workers`` processes don't oversubscribe the cores, rebuilds the
+    calibrator from ``settings`` (rather than pickling a live one), and captures
+    log output for the parent to replay. Never raises: :func:`process_file`
+    already turns per-file failures into a result dict, keeping the batch alive.
+    """
+    settings, src, dst, shared, thread_cap = job
+    buf = _ListLogger()
+    calibrator = settings.build_calibrator()
+    with _cap_worker_threads(thread_cap):
+        result = process_file(Path(src), Path(dst), shared=shared,
+                              **_build_pf_kwargs(settings, calibrator, buf))
+    result["log"] = buf.lines
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +429,10 @@ def main() -> None:
                         help="partition movies into alignment sets (with --reuse-alignment)")
     parser.add_argument("--group-token", default=S, dest="group_token", metavar="REGEX",
                         help="filename marker regex for --group-by token")
+    parser.add_argument("--workers", type=int, default=S, metavar="N",
+                        help="process this many movies in parallel (default 1). Each "
+                             "worker caps inner kernel threads to ~cores/N. Not used "
+                             "with --reuse-alignment first (kept sequential).")
     parser.add_argument("--verbose", action="store_true", default=S)
     parser.add_argument("--dry-run", action="store_true", default=S, dest="dry_run")
     args = parser.parse_args()
@@ -393,6 +491,8 @@ def main() -> None:
                    if settings.calibration.mode == "robust" else ""))
     logger.info(f"  BG radius     : {settings.processing.bg_radius}")
     logger.info(f"  Bunch size    : {settings.processing.bunch_size}")
+    logger.info(f"  Workers       : {max(1, settings.runtime.workers)}"
+                + ("  (parallel across files)" if settings.runtime.workers > 1 else ""))
     logger.info(f"  Conserve      : {reuse}"
                 + (f"  (group-by {settings.grouping.by})" if reuse != "none" else ""))
     if settings.channels.projection_frames:
@@ -423,51 +523,89 @@ def main() -> None:
                                 f"t=({t.t1:.2f},{t.t2:.2f})"
                                 for n, t in predetermined.transforms.items()))
 
-    def _pf_kwargs():
-        return dict(
-            calibrator=calibrator, bunch_size=settings.processing.bunch_size,
-            bg_radius=settings.processing.bg_radius,
-            projection_frames=settings.channels.projection_frames,
-            verbose=settings.runtime.verbose, logger=logger,
-            norm_from_max=settings.processing.norm_projection == "max",
-            norm_exclude=settings.processing.norm_exclude,
-            rgb_bitdepth=settings.io.rgb_bitdepth,
-        )
+    workers = max(1, settings.runtime.workers)
+    # File-level parallelism is only safe when files are independent: --reuse none
+    # (each movie stands alone) or a predetermined reference FILE (shared, already
+    # computed). --reuse first has a within-set dependency (the first movie seeds
+    # the rest), so it stays sequential.
+    parallel = workers > 1 and reuse != "first"
+    if workers > 1 and reuse == "first":
+        logger.info("  Note: --workers is ignored with --reuse-alignment first "
+                    "(each set's first movie must seed the rest; kept sequential).")
 
     results: list[dict] = []
     idx = 0
     t_batch = time.perf_counter()
 
-    for gkey, members in groups:
-        set_shared = predetermined  # None unless reuse == FILE
-        label = "" if settings.grouping.by == "run" else f" [{gkey}]"
-        for src in members:
-            idx += 1
-            dst = _output_path(src, src_root, dst_root, suffix)
-            logger.info(f"\n[{idx}/{len(files)}]{label} {src.relative_to(src_root)}")
-            if dst.exists() and not overwrite:
-                logger.info("  [SKIP] output exists (use --overwrite)")
-                results.append({"src": str(src), "success": False, "skipped": True,
-                                "rejected": False, "error": None, "duration": 0.0})
-                continue
+    if parallel:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        thread_cap = max(1, (os.cpu_count() or 1) // workers)
 
-            if reuse == "none":
-                r = process_file(src, dst, shared=None, **_pf_kwargs())
-            elif set_shared is None:
-                # First movie of the set defines its alignment.
-                r = process_file(src, dst, shared=None, **_pf_kwargs())
-                if r["success"] and r.get("calibration") is not None:
-                    set_shared = r["calibration"]
-                elif r.get("rejected"):
-                    logger.warning("  set reference rejected; remaining movies in this "
-                                   "set will be aligned independently")
-            else:
-                r = process_file(src, dst, shared=set_shared, **_pf_kwargs())
+        jobs = []  # (idx, src, dst) for files that actually need processing
+        for gkey, members in groups:
+            for src in members:
+                idx += 1
+                dst = _output_path(src, src_root, dst_root, suffix)
+                if dst.exists() and not overwrite:
+                    logger.info(f"\n[{idx}/{len(files)}] {src.relative_to(src_root)}")
+                    logger.info("  [SKIP] output exists (use --overwrite)")
+                    results.append({"src": str(src), "success": False, "skipped": True,
+                                    "rejected": False, "error": None, "duration": 0.0})
+                    continue
+                jobs.append((idx, src, dst))
 
-            r["index"] = idx
-            results.append(r)
-            status = "OK" if r["success"] else ("REJECT" if r.get("rejected") else "FAILED")
-            logger.info(f"  [{status}] {_fmt_seconds(r['duration'])}")
+        logger.info(f"\nProcessing {len(jobs)} file(s) across {workers} worker "
+                    f"process(es), ~{thread_cap} inner thread(s) each ...")
+        # shared = predetermined reference (None when reuse == "none").
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            fut_meta = {
+                pool.submit(_process_one,
+                            (settings, str(src), str(dst), predetermined, thread_cap)):
+                    (jidx, src)
+                for (jidx, src, dst) in jobs
+            }
+            for fut in as_completed(fut_meta):
+                jidx, src = fut_meta[fut]
+                r = fut.result()
+                r["index"] = jidx
+                logger.info(f"\n[{jidx}/{len(files)}] {src.relative_to(src_root)}")
+                for level, msg in r.pop("log", []):
+                    getattr(logger, level)(msg)
+                status = "OK" if r["success"] else ("REJECT" if r.get("rejected") else "FAILED")
+                logger.info(f"  [{status}] {_fmt_seconds(r['duration'])}")
+                results.append(r)
+    else:
+        for gkey, members in groups:
+            set_shared = predetermined  # None unless reuse == FILE
+            label = "" if settings.grouping.by == "run" else f" [{gkey}]"
+            for src in members:
+                idx += 1
+                dst = _output_path(src, src_root, dst_root, suffix)
+                logger.info(f"\n[{idx}/{len(files)}]{label} {src.relative_to(src_root)}")
+                if dst.exists() and not overwrite:
+                    logger.info("  [SKIP] output exists (use --overwrite)")
+                    results.append({"src": str(src), "success": False, "skipped": True,
+                                    "rejected": False, "error": None, "duration": 0.0})
+                    continue
+
+                pf_kwargs = _build_pf_kwargs(settings, calibrator, logger)
+                if reuse == "none":
+                    r = process_file(src, dst, shared=None, **pf_kwargs)
+                elif set_shared is None:
+                    # First movie of the set defines its alignment.
+                    r = process_file(src, dst, shared=None, **pf_kwargs)
+                    if r["success"] and r.get("calibration") is not None:
+                        set_shared = r["calibration"]
+                    elif r.get("rejected"):
+                        logger.warning("  set reference rejected; remaining movies in this "
+                                       "set will be aligned independently")
+                else:
+                    r = process_file(src, dst, shared=set_shared, **pf_kwargs)
+
+                r["index"] = idx
+                results.append(r)
+                status = "OK" if r["success"] else ("REJECT" if r.get("rejected") else "FAILED")
+                logger.info(f"  [{status}] {_fmt_seconds(r['duration'])}")
 
     # ---- Summary ----
     total = time.perf_counter() - t_batch
