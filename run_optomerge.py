@@ -302,23 +302,54 @@ def _build_pf_kwargs(settings, calibrator, logger) -> dict:
     )
 
 
+def _cap_worker_threads(thread_cap: int):
+    """Bound every layer of threading in a worker to ~``thread_cap`` cores.
+
+    Critical for parallel workers: the kernels have three nested sources of
+    threads, and only capping ours leaves the others oversubscribing --
+    ``workers`` processes each spawning cv2/BLAS threads across *all* cores
+    thrashes (measured: per-movie time 5x worse, no batch speedup). So:
+
+    * cv2 (the warp/morph backend) -> 1 thread per op (``cv2.setNumThreads``);
+    * BLAS/OpenMP (numpy/scipy) -> ``thread_cap`` via threadpoolctl if present;
+    * our per-frame ``ThreadPoolExecutor`` -> ``thread_cap`` (the frame-level
+      parallelism that actually fills this worker's core share).
+
+    Returns a context manager for the BLAS limit (a no-op if threadpoolctl is
+    absent), to be held open for the duration of the work.
+    """
+    import contextlib
+
+    from optomerge import set_default_workers
+    try:
+        import cv2
+        cv2.setNumThreads(1)
+    except Exception:  # pragma: no cover - cv2 optional
+        pass
+    set_default_workers(thread_cap)
+    try:
+        from threadpoolctl import threadpool_limits
+        return threadpool_limits(limits=thread_cap)
+    except Exception:  # pragma: no cover - threadpoolctl optional
+        return contextlib.nullcontext()
+
+
 def _process_one(job: tuple) -> dict:
     """Worker entry point: process one movie in an isolated process.
 
     ``job`` is ``(settings, src, dst, shared, thread_cap)``, all picklable.
-    Caps the per-frame kernels' inner threading to ``thread_cap`` so that
-    ``workers`` processes x threads do not oversubscribe the cores, rebuilds the
+    Caps all threading layers to ``thread_cap`` (see :func:`_cap_worker_threads`)
+    so ``workers`` processes don't oversubscribe the cores, rebuilds the
     calibrator from ``settings`` (rather than pickling a live one), and captures
     log output for the parent to replay. Never raises: :func:`process_file`
     already turns per-file failures into a result dict, keeping the batch alive.
     """
     settings, src, dst, shared, thread_cap = job
-    from optomerge import set_default_workers
-    set_default_workers(thread_cap)
     buf = _ListLogger()
     calibrator = settings.build_calibrator()
-    result = process_file(Path(src), Path(dst), shared=shared,
-                          **_build_pf_kwargs(settings, calibrator, buf))
+    with _cap_worker_threads(thread_cap):
+        result = process_file(Path(src), Path(dst), shared=shared,
+                              **_build_pf_kwargs(settings, calibrator, buf))
     result["log"] = buf.lines
     return result
 
