@@ -1,4 +1,4 @@
-"""Tests for RGB TIFF output bit depth."""
+"""Tests for RGB TIFF output: bit depth and atomic (crash-safe) writes."""
 from __future__ import annotations
 
 import numpy as np
@@ -14,6 +14,7 @@ class _Recorder:
 
     def imwrite(self, path, arr, **kw):
         self.arr = np.asarray(arr)
+        open(path, "wb").close()   # a real file, so the atomic rename succeeds
 
 
 def _rgb():
@@ -54,3 +55,24 @@ def test_tiffwriter_carries_bit_depth():
     from optomerge import TiffWriter, MovieWriter
     assert TiffWriter().bit_depth == 8
     assert MovieWriter.for_path("x.tif", bit_depth=16).bit_depth == 16
+
+
+def test_save_is_atomic_and_leaves_no_temp(tmp_path):
+    out = tmp_path / "out.tif"
+    _io.save_rgb_tiff(out, _rgb())
+    assert out.exists()
+    assert [p.name for p in tmp_path.iterdir()] == ["out.tif"]
+
+
+def test_interrupted_write_leaves_no_output(monkeypatch, tmp_path):
+    """A crash mid-write must not leave a (truncated) output that a resumed
+    batch would mistake for a finished movie."""
+    class _Crash:
+        def imwrite(self, path, arr, **kw):
+            open(path, "wb").write(b"partial")
+            raise KeyboardInterrupt  # e.g. SLURM preemption / Ctrl-C
+    monkeypatch.setattr(_io, "tifffile", _Crash())
+    out = tmp_path / "out.tif"
+    with pytest.raises(KeyboardInterrupt):
+        _io.save_rgb_tiff(out, _rgb())
+    assert list(tmp_path.iterdir()) == []

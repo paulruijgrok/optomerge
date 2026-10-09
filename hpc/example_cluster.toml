@@ -1,0 +1,23 @@
+# Example config for a cluster run (first test: feature alignment).
+# Copy, edit the paths, and pass to hpc/optomerge_single.sbatch or
+# hpc/optomerge_array.sbatch. Only keys that differ from the defaults are listed;
+# see ../optomerge.example.toml for every option.
+#
+# Use ABSOLUTE paths on the cluster: relative paths resolve against the repo.
+# Redoing a run with another aligner is cheap: point `output` at a new folder
+# (e.g. .../aligned_mi) and resubmit -- or pass --overwrite to replace in place.
+
+[io]
+input = "/scratch/users/CHANGE_ME/optomerge/raw"        # scanned recursively for .tif
+output = "/scratch/users/CHANGE_ME/optomerge/aligned_feature"
+
+[channels]
+# "auto" is unreliable -- set the order explicitly for every dataset.
+channel_order = "top_green_fils_bottom_red_heads"
+
+[alignment]
+method = "feature"        # head-to-filament registration
+fit_rotation = true       # small bounded rotation on top of the translation fit
+
+[runtime]
+reuse_alignment = "none"  # every movie independent: best for sharding

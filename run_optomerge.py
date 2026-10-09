@@ -91,7 +91,9 @@ try:
         MergePipeline,
         RawMovie,
         Settings,
+        available_cpus,
         group_movies,
+        select_shard,
     )
 except ImportError as e:
     sys.exit(
@@ -135,6 +137,7 @@ _CLI_TO_FIELD = {
     "group_by": "by", "group_token": "token_pattern",
     "reuse_alignment": "reuse_alignment", "verbose": "verbose", "dry_run": "dry_run",
     "workers": "workers",
+    "num_shards": "num_shards", "shard_index": "shard_index",
 }
 
 
@@ -460,6 +463,12 @@ def main() -> None:
                         help="process this many movies in parallel (default 1). Each "
                              "worker caps inner kernel threads to ~cores/N. Not used "
                              "with --reuse-alignment first (kept sequential).")
+    parser.add_argument("--num-shards", type=int, default=S, metavar="N", dest="num_shards",
+                        help="split the batch into N independent parts (for cluster job "
+                             "arrays; default 1). Use with --shard-index.")
+    parser.add_argument("--shard-index", type=int, default=S, metavar="I", dest="shard_index",
+                        help="process only part I (0-based) of --num-shards N. Whole "
+                             "alignment sets stay together with --reuse-alignment first.")
     parser.add_argument("--verbose", action="store_true", default=S)
     parser.add_argument("--dry-run", action="store_true", default=S, dest="dry_run")
     args = parser.parse_args()
@@ -484,31 +493,62 @@ def main() -> None:
     if not files:
         sys.exit(f"No .tif files found under {src_root}")
 
+    # Partition into alignment sets, then (for cluster job arrays) keep only this
+    # shard's share. Every shard sees the same sorted listing, so the split is
+    # deterministic and needs no coordination between jobs.
+    reuse = settings.runtime.reuse_alignment
+    groups = group_movies(files, settings.grouping.by, settings.grouping.token_pattern)
+    n_total = len(files)
+    num_shards = settings.runtime.num_shards
+    shard_index = settings.runtime.shard_index
+    sharded = num_shards > 1
+    if sharded:
+        try:
+            groups = select_shard(groups, num_shards, shard_index,
+                                  keep_groups_together=(reuse == "first"))
+        except ValueError as exc:
+            sys.exit(f"ERROR: {exc}")
+        files = [p for _, members in groups for p in members]
+    shard_tag = f"shard {shard_index}/{num_shards}" if sharded else ""
+
     if settings.runtime.dry_run:
-        print(f"Dry run — {len(files)} file(s) found under {src_root}:\n")
+        if sharded:
+            print(f"Dry run — {shard_tag}: {len(files)} of {n_total} file(s) "
+                  f"under {src_root}:\n")
+        else:
+            print(f"Dry run — {len(files)} file(s) found under {src_root}:\n")
         for f in files:
             out = _output_path(f, src_root, dst_root, suffix)
             print(f"  {f.relative_to(src_root)}\n    -> {out.relative_to(dst_root)}\n")
         return
 
     dst_root.mkdir(parents=True, exist_ok=True)
-    log_path = dst_root / "run_log.txt"
+    # Each shard of a job array logs to its own file (they share dst_root).
+    log_name = (f"run_log_shard{shard_index:03d}of{num_shards:03d}.txt"
+                if sharded else "run_log.txt")
+    log_path = dst_root / log_name
     logger = _setup_logging(log_path, settings.runtime.verbose)
 
     # Provenance: record the fully-resolved config next to the output so the run
-    # is reproducible (loads back via Settings.from_toml).
+    # is reproducible (loads back via Settings.from_toml). Written via a
+    # per-process temp file + atomic rename, since concurrent shards all write it.
+    # The shard fields describe the job layout, not the analysis, so they're
+    # reset: every shard then writes identical content.
     config_path = dst_root / "run_config.toml"
-    config_path.write_text(settings.to_toml(), encoding="utf-8")
+    tmp_cfg = dst_root / f".run_config.toml.{os.getpid()}.partial"
+    tmp_cfg.write_text(settings.with_overrides(num_shards=1, shard_index=0).to_toml(),
+                       encoding="utf-8")
+    os.replace(tmp_cfg, config_path)
 
     calibrator = settings.build_calibrator()
-    reuse = settings.runtime.reuse_alignment
-    groups = group_movies(files, settings.grouping.by, settings.grouping.token_pattern)
 
     logger.info("=" * 70)
     logger.info("optomerge batch processor (OOP)")
     logger.info(f"  Input  : {src_root}")
     logger.info(f"  Output : {dst_root}")
-    logger.info(f"  Files  : {len(files)}  in {len(groups)} set(s)")
+    logger.info(f"  Files  : {len(files)}  in {len(groups)} set(s)"
+                + (f"  [{shard_tag} of {n_total} total]" if sharded else ""))
+    logger.info(f"  CPUs   : {available_cpus()} available to this process")
     logger.info(f"  Config : {', '.join(args.config) if args.config else '(built-in defaults)'}")
     logger.info(f"  Channel order : {settings.channels.channel_order}")
     logger.info(f"  Calibrator    : {settings.calibration.mode}"
@@ -526,6 +566,14 @@ def main() -> None:
         logger.info(f"  Projection frames: {settings.channels.projection_frames}")
     logger.info(f"  Resolved config saved to: {config_path.name}")
     logger.info("=" * 70)
+    if not files:
+        logger.info(f"Nothing to do: {shard_tag} received no files "
+                    f"(more shards than files/sets).")
+        sys.exit(0)
+    if sharded and reuse == "first" and len(groups) == 1 and num_shards > 1:
+        logger.warning("  --reuse-alignment first with a single set keeps every movie "
+                       "in one shard; use --group-by token/folder to spread sets "
+                       "across shards, or --reuse-alignment FILE / none.")
 
     # Predetermined alignment from a reference FILE (applied to every set).
     predetermined: "Calibration | None" = None
@@ -566,7 +614,7 @@ def main() -> None:
 
     if parallel:
         from concurrent.futures import ProcessPoolExecutor, as_completed
-        thread_cap = max(1, (os.cpu_count() or 1) // workers)
+        thread_cap = max(1, available_cpus() // workers)
 
         jobs = []  # (idx, src, dst) for files that actually need processing
         for gkey, members in groups:
@@ -602,6 +650,13 @@ def main() -> None:
                 logger.info(f"  [{status}] {_fmt_seconds(r['duration'])}")
                 results.append(r)
     else:
+        # cv2 sizes its own thread pool from the whole machine; on a shared
+        # cluster node bound it to this job's allocation.
+        try:
+            import cv2
+            cv2.setNumThreads(available_cpus())
+        except Exception:  # pragma: no cover - cv2 optional
+            pass
         for gkey, members in groups:
             set_shared = predetermined  # None unless reuse == FILE
             label = "" if settings.grouping.by == "run" else f" [{gkey}]"

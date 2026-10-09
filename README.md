@@ -155,11 +155,20 @@ built to survive an overnight run:
   Pick `--workers` to fit memory, not just cores (see
   [docs/benchmarks.md](docs/benchmarks.md)); it's memory-bound on a laptop and
   scales toward the core count on a high-RAM/core machine.
+- **Shardable** — `--num-shards N --shard-index I` processes only part `I` of a
+  deterministic split of the batch, so a cluster job array can spread one input
+  tree over many nodes, all writing into the same output tree. Outputs are
+  written atomically, so killed or requeued jobs resume cleanly.
+
+**On a SLURM cluster** use the ready-made scripts in [`hpc/`](hpc/README.md):
+a one-node pilot (`optomerge_single.sbatch`) and a sharded job array
+(`optomerge_array.sbatch`).
 
 ```bash
 python run_optomerge.py --channel-order auto --frames 200
 python run_optomerge.py --workers 4               # process 4 movies at a time
 python run_optomerge.py --dry-run                 # list files, do nothing
+python run_optomerge.py --num-shards 4 --shard-index 0   # first quarter of the batch
 ```
 
 ### Robust alignment, acceptance & conserving across a set
@@ -287,8 +296,11 @@ on Python 3.9+ — 3.11+ uses the standard-library `tomllib`, and on 3.9/3.10 th
 - `tests/` — test suite (run `pytest` from the repo root)
 - `pyproject.toml` — package metadata and dependencies (at the repo root)
 - `run_optomerge.py`, `test_pipeline.py`, `profile_pipeline.py` — entry-point scripts
+- `hpc/` — SLURM scripts and guide for running on a cluster ([hpc/README.md](hpc/README.md))
+- `journals/` — dated session journals (what changed, why, open items)
 - `docs/` — `DESIGN.md` (architecture / object model), `feature_registration.md`,
-  `general_registration.md` (ECC / mutual-information / keypoint aligners)
+  `general_registration.md` (ECC / mutual-information / keypoint aligners),
+  `benchmarks.md` (performance), `candidate_datasets.md` (public validation data)
 - `test_data/` — sample movies (git-ignored)
 - `output_temp/` — script output (git-ignored)
 
@@ -318,7 +330,8 @@ Known limitations / future work:
 - **Output normalisation** uses each channel's projection min/max, which can
   make bright frames look over-saturated; robust (percentile) normalisation is
   the next planned improvement.
-- Not yet ported from the procedural pipeline: GPU acceleration and file-level
-  parallelism. Predetermined alignment can be taken from a reference movie
+- Not yet ported from the procedural pipeline: GPU acceleration. (File-level
+  parallelism is in: `--workers` within a machine, `--num-shards` across
+  cluster jobs.) Predetermined alignment can be taken from a reference movie
   (`--reuse-alignment FILE`); saving/loading a fitted alignment to a sidecar
   file is not yet implemented.
