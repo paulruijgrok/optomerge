@@ -13,6 +13,7 @@ Movies are stored as ``float64`` NumPy arrays with shape ``(H, W, N)`` where
 
 from __future__ import annotations
 
+import os
 import warnings
 from pathlib import Path
 from typing import Optional, Tuple
@@ -196,4 +197,15 @@ def save_rgb_tiff(filename: str | Path, rgb_movie: np.ndarray, bit_depth: int = 
         raise ValueError(f"bit_depth must be 8 or 16, got {bit_depth}.")
     # (H, W, 3, N) → (N, H, W, 3)
     out = np.moveaxis(scaled, -1, 0)
-    tifffile.imwrite(str(filename), out, photometric="rgb")
+    # Write to a hidden temp file in the same directory, then atomically rename.
+    # A job killed mid-write (SLURM preemption/timeout, Ctrl-C) then leaves no
+    # truncated .tif behind -- which matters because the batch runner treats an
+    # existing output as "done" and skips it on resume.
+    final = Path(filename)
+    tmp = final.with_name(f".{final.name}.partial")
+    try:
+        tifffile.imwrite(str(tmp), out, photometric="rgb")
+        os.replace(tmp, final)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise

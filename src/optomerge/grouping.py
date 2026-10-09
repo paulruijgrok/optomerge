@@ -90,3 +90,53 @@ def group_movies(
             order.append(key)
         groups[key].append(p)
     return [(key, groups[key]) for key in order]
+
+
+def select_shard(
+    groups: List[Tuple[str, List[Path]]],
+    num_shards: int,
+    shard_index: int,
+    *,
+    keep_groups_together: bool,
+) -> List[Tuple[str, List[Path]]]:
+    """Return the subset of ``groups`` belonging to one shard of a split batch.
+
+    Used to spread a batch over independent jobs (e.g. a SLURM job array): every
+    job sees the same sorted file list and keeps only its own share, so no
+    coordination is needed. Assignment is round-robin, which balances load when
+    similar movies sit next to each other in the listing.
+
+    Parameters
+    ----------
+    groups : list of (key, [Path, ...])
+        Output of :func:`group_movies`.
+    num_shards, shard_index : int
+        Split into ``num_shards`` parts and keep part ``shard_index``
+        (0-based, ``0 <= shard_index < num_shards``).
+    keep_groups_together : bool
+        True when movies in a set depend on each other (``--reuse-alignment
+        first``: the first movie seeds the rest), so whole sets are assigned to
+        one shard. False when movies are independent, so individual files are
+        dealt out for the best balance (empty groups are dropped).
+    """
+    if num_shards < 1:
+        raise ValueError(f"num_shards must be >= 1, got {num_shards}")
+    if not 0 <= shard_index < num_shards:
+        raise ValueError(
+            f"shard_index must be in [0, {num_shards - 1}], got {shard_index}"
+        )
+    if num_shards == 1:
+        return groups
+    if keep_groups_together:
+        return [g for i, g in enumerate(groups) if i % num_shards == shard_index]
+    out: List[Tuple[str, List[Path]]] = []
+    i = 0
+    for key, members in groups:
+        mine = []
+        for p in members:
+            if i % num_shards == shard_index:
+                mine.append(p)
+            i += 1
+        if mine:
+            out.append((key, mine))
+    return out

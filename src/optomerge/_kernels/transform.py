@@ -29,7 +29,6 @@ Backend selection
 
 from __future__ import annotations
 
-import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Tuple
 
@@ -216,8 +215,8 @@ def transform_image(
     H, W, N = im.shape
 
     if n_workers is None:
-        from ._parallel import get_default_workers
-        n_workers = get_default_workers() or os.cpu_count() or 1
+        from ._parallel import available_cpus, get_default_workers
+        n_workers = get_default_workers() or available_cpus()
 
     # ---- choose backend ----
     use_cv2 = False

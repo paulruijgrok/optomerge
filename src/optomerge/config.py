@@ -223,6 +223,11 @@ class RuntimeSettings:
     #: batches by overlapping the not-fully-parallel per-movie work (load,
     #: alignment, RGB assembly); a single movie already uses all cores.
     workers: int = 1
+    #: Split the batch into ``num_shards`` independent parts and process only
+    #: part ``shard_index`` (0-based). For cluster job arrays: each array task
+    #: runs the same command with its own index. 1 = no sharding.
+    num_shards: int = 1
+    shard_index: int = 0
 
 
 _SECTIONS = {

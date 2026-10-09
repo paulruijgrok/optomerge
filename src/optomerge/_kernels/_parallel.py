@@ -12,9 +12,10 @@ still wins; this only changes the ``n_workers is None`` default.
 """
 from __future__ import annotations
 
+import os
 from typing import Optional
 
-_DEFAULT_WORKERS: Optional[int] = None  # None => use all logical CPUs
+_DEFAULT_WORKERS: Optional[int] = None  # None => use available_cpus()
 
 
 def get_default_workers() -> Optional[int]:
@@ -30,3 +31,27 @@ def set_default_workers(n: Optional[int]) -> None:
     """
     global _DEFAULT_WORKERS
     _DEFAULT_WORKERS = None if n is None else max(1, int(n))
+
+
+def available_cpus() -> int:
+    """Number of CPUs this process may actually use.
+
+    ``os.cpu_count()`` reports every core on the machine, which on a shared
+    cluster node can be far more than the job was allocated (e.g. 128 cores
+    visible, 8 granted). Sizing thread pools from it oversubscribes the
+    allocation. This prefers the process's CPU affinity mask (what SLURM's
+    cgroup/affinity plugins restrict) and, when running under SLURM, never
+    exceeds ``SLURM_CPUS_PER_TASK``. Falls back to ``os.cpu_count()`` where
+    affinity is unavailable (macOS, Windows).
+    """
+    try:
+        n = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        n = os.cpu_count() or 1
+    slurm = os.environ.get("SLURM_CPUS_PER_TASK")
+    if slurm:
+        try:
+            n = min(n, int(slurm))
+        except ValueError:
+            pass
+    return max(1, n)
