@@ -112,6 +112,24 @@ hard channel pair cannot sink a batch run.
 - **Keypoint** returns identity when detectors find too little texture (e.g. a
   sparse point channel) — that is the case the `feature` aligner exists for.
 
+## First comparison on real data (2026-07-10/11)
+
+All 31 raw movies in `test_data/` (MyLOV1Char, MyLOVChar, MyLOVChar4), channel
+order forced to `top_green_fils_bottom_red_heads`, `--reuse-alignment none`,
+default acceptance limits (|t| <= 25 px, |rot| <= 2 deg, |scale-1| <= 2 %):
+
+| method | rejected by acceptance | crashed | wall time (31 movies) |
+|---|---|---|---|
+| `phase` | 9 (scale 2.7-5 %, one translation of ~120 px) | 0 | 4m 11s |
+| `ecc` | 2 (rotation 2.9-3.7 deg, MyLOVChar ch12) | 0 | 4m 31s |
+| `mi` | 0 | 0 | 3m 47s |
+
+Acceptance is a sanity gate, not an accuracy measure: these numbers show which
+methods produce *plausible* transforms, not which is most accurate. Overlays
+still need a visual check, and the feature aligner (the tailored method for
+heads-on-filaments data) was not part of this sweep. Logs: `output_{phase,ecc,mi}/run_log.txt`
+(not committed).
+
 ## Roadmap / future work
 
 - **Method auto-selection / guidance** — pick an aligner from channel statistics
@@ -121,5 +139,6 @@ hard channel pair cannot sink a batch run.
   hard movies (tracked in the feature-registration roadmap).
 - **Masked / multi-frame variants** — currently these aligners fit on the channel
   projection; a per-frame or masked-overlap variant could help low-SNR movies.
-- **Broader validation** across public multichannel datasets (see the project
-  notes) to tune the defaults for the wider community.
+- **Broader validation** across public multichannel datasets (see
+  [`candidate_datasets.md`](candidate_datasets.md)) to tune the defaults for the
+  wider community.
