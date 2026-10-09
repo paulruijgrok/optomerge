@@ -236,6 +236,33 @@ default `phase` behaviour. It fits translation by default; a small, tightly-boun
 rotation and isotropic scale can be layered on with `--fit-rotation` / `--fit-scale`
 for movies with a field-dependent residual.
 
+### General-purpose registration (ECC, mutual information, keypoints)
+
+For data that isn't the point-vs-line OptoSplit case, three general aligners cover
+the wider two-image registration problem — pick by how the two channels relate:
+
+- **`--ecc`** — OpenCV's Enhanced Correlation Coefficient. A dense, sub-pixel
+  intensity method invariant to per-channel gain/bias; best when the channels
+  image *similar* structure (same beads/cells in two colours).
+- **`--mi`** — mutual-information maximisation. For genuinely *multimodal* channels
+  whose brightnesses are statistically dependent but not linearly related.
+- **`--keypoint`** — ORB/SIFT keypoint matching + RANSAC. Handles larger shifts and
+  rotations and partial overlap, given enough shared, matchable texture.
+
+```bash
+python run_optomerge.py --ecc --ecc-motion euclidean --max-shift 20
+python run_optomerge.py --mi --fit-rotation --max-shift 20
+python run_optomerge.py --keypoint --keypoint-detector sift
+```
+
+These require OpenCV (`pip install opencv-python-headless`) and are opt-in behind
+the same `Aligner` seam, so the default `phase` behaviour is unchanged. Each
+returns a method-appropriate quality score (ECC coefficient, mutual information, or
+RANSAC inlier fraction) and falls back to identity rather than raising on hard
+input. See [docs/general_registration.md](docs/general_registration.md) for the
+method-by-method guide, parameters, and failure modes. Method auto-selection is a
+planned follow-up.
+
 ### Configuration & run provenance
 
 Run parameters resolve in three layers, each overriding the previous: built-in
@@ -260,7 +287,8 @@ on Python 3.9+ — 3.11+ uses the standard-library `tomllib`, and on 3.9/3.10 th
 - `tests/` — test suite (run `pytest` from the repo root)
 - `pyproject.toml` — package metadata and dependencies (at the repo root)
 - `run_optomerge.py`, `test_pipeline.py`, `profile_pipeline.py` — entry-point scripts
-- `docs/` — `DESIGN.md` (architecture / object model), `feature_registration.md`
+- `docs/` — `DESIGN.md` (architecture / object model), `feature_registration.md`,
+  `general_registration.md` (ECC / mutual-information / keypoint aligners)
 - `test_data/` — sample movies (git-ignored)
 - `output_temp/` — script output (git-ignored)
 
@@ -271,9 +299,12 @@ the earlier procedural package and its OOP proposal have been consolidated into
 it. The full test suite passes, including an end-to-end pipeline test on the
 sample movies.
 
-Registration currently supports one reference plus one moving channel via phase
-correlation, with acceptance criteria, a robust best-of-N calibrator, a
-constrained peak search, and conserve-alignment across movie sets (see above).
+Registration supports one reference plus one moving channel through five
+interchangeable aligners behind the `Aligner` seam — `phase` (FFT correlation,
+default), `feature` (head-to-filament distance), and the general-purpose `ecc`,
+`mi`, and `keypoint` methods (see above) — with acceptance criteria, a robust
+best-of-N calibrator, a constrained peak search, and conserve-alignment across
+movie sets.
 Channels are segmented by default with a robust row-intensity-profile method
 that finds tight axis-aligned rectangles (`--segmentation row_profile`; the
 legacy k-means/slanted-line search is `line_search`). The layout / aligner /

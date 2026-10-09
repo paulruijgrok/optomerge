@@ -128,6 +128,9 @@ _CLI_TO_FIELD = {
     "fit_rotation": "fit_rotation", "fit_scale": "fit_scale",
     "feature_rotation_max_deg": "feature_rotation_max_deg",
     "feature_scale_max_pct": "feature_scale_max_pct",
+    "ecc_motion": "ecc_motion", "ecc_gauss_blur": "ecc_gauss_blur",
+    "mi_bins": "mi_bins",
+    "keypoint_detector": "keypoint_detector", "keypoint_motion": "keypoint_motion",
     "calibration_mode": "mode",
     "group_by": "by", "group_token": "token_pattern",
     "reuse_alignment": "reuse_alignment", "verbose": "verbose", "dry_run": "dry_run",
@@ -396,13 +399,37 @@ def main() -> None:
     parser.add_argument("--no-rotation", action="store_const", const=False, default=S,
                         dest="fit_scale_rotation",
                         help="fit translation only (pin rotation/scale; avoids over-fitting)")
-    parser.add_argument("--align-method", default=S, choices=["phase", "feature"],
+    parser.add_argument("--align-method", default=S,
+                        choices=["phase", "feature", "ecc", "mi", "keypoint"],
                         dest="align_method",
                         help="registration algorithm: phase (default) | feature "
-                             "(head-to-filament distance, for point-vs-line channels)")
+                             "(head-to-filament distance, point-vs-line channels) | "
+                             "ecc (dense intensity, similar structure) | mi "
+                             "(mutual information, multimodal channels) | keypoint "
+                             "(ORB/SIFT matching, larger shifts). ecc/mi/keypoint need OpenCV")
     parser.add_argument("--feature", action="store_const", const="feature", default=S,
                         dest="align_method",
                         help="shorthand for --align-method feature")
+    parser.add_argument("--ecc", action="store_const", const="ecc", default=S,
+                        dest="align_method", help="shorthand for --align-method ecc")
+    parser.add_argument("--mi", action="store_const", const="mi", default=S,
+                        dest="align_method", help="shorthand for --align-method mi")
+    parser.add_argument("--keypoint", action="store_const", const="keypoint", default=S,
+                        dest="align_method", help="shorthand for --align-method keypoint")
+    parser.add_argument("--ecc-motion", default=S, choices=["translation", "euclidean", "affine"],
+                        dest="ecc_motion",
+                        help="(ecc) degrees of freedom (default: euclidean)")
+    parser.add_argument("--ecc-gauss-blur", type=int, default=S, metavar="PX",
+                        dest="ecc_gauss_blur",
+                        help="(ecc) pre-smoothing size in px, odd (default 5; widens capture range)")
+    parser.add_argument("--mi-bins", type=int, default=S, metavar="N", dest="mi_bins",
+                        help="(mi) joint-histogram bins per axis (default 32)")
+    parser.add_argument("--keypoint-detector", default=S, choices=["orb", "sift"],
+                        dest="keypoint_detector",
+                        help="(keypoint) detector/descriptor (default: orb)")
+    parser.add_argument("--keypoint-motion", default=S, choices=["similarity", "affine"],
+                        dest="keypoint_motion",
+                        help="(keypoint) transform model (default: similarity)")
     parser.add_argument("--deweight-stuck", action="store_true", default=S,
                         dest="deweight_stuck",
                         help="(feature) down-weight stuck objects (count once, not per-frame)")

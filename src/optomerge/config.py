@@ -50,9 +50,17 @@ class ChannelSettings:
 
 @dataclass
 class AlignmentSettings:
-    #: Registration algorithm: "phase" (default; FFT phase correlation, general
-    #: purpose) or "feature" (head-to-filament distance minimisation, tailored to
-    #: point-vs-line OptoSplit channels -- see FeatureDistanceAligner).
+    #: Registration algorithm:
+    #:   "phase"    (default) FFT phase correlation -- general, shared texture.
+    #:   "feature"  head-to-filament distance minimisation, tailored to
+    #:              point-vs-line OptoSplit channels (see FeatureDistanceAligner).
+    #:   "ecc"      OpenCV Enhanced Correlation Coefficient -- dense intensity
+    #:              method, invariant to per-channel gain/bias (similar structure).
+    #:   "mi"       mutual-information maximisation -- for multimodal channels
+    #:              whose intensities need not be linearly related.
+    #:   "keypoint" ORB/SIFT keypoint matching + RANSAC affine -- larger shifts/
+    #:              rotations, needs shared matchable texture.
+    #: The last three live in optomerge.general_registration and require OpenCV.
     method: str = "phase"
     #: Sampled raw frames used by the "feature" aligner (spread across the movie).
     feature_frames: int = 60
@@ -87,7 +95,35 @@ class AlignmentSettings:
     #: so the extra degree of freedom cannot over-fit.
     feature_rotation_max_deg: float = 2.0
     #: "feature" isotropic scale search bound (percent): |scale - 1| * 100 <= this.
+    #: Also used as the rotation/scale bounds for the "mi" aligner when its
+    #: fit_rotation / fit_scale are enabled.
     feature_scale_max_pct: float = 2.0
+    #: "ecc" degrees of freedom: "translation" | "euclidean" (default) | "affine".
+    ecc_motion: str = "euclidean"
+    #: "ecc" maximum iterations of the ECC optimiser.
+    ecc_iterations: int = 100
+    #: "ecc" convergence threshold on the ECC increment.
+    ecc_eps: float = 1e-5
+    #: "ecc" Gaussian smoothing size (pixels, odd) applied before each iteration;
+    #: larger widens the capture range at the cost of precision.
+    ecc_gauss_blur: int = 5
+    #: "mi" number of joint-histogram bins per axis.
+    mi_bins: int = 32
+    #: "mi" grid spacing (pixels) for the coarse translation search.
+    mi_step: float = 2.0
+    #: "keypoint" detector/descriptor: "orb" (default, fast) or "sift".
+    keypoint_detector: str = "orb"
+    #: "keypoint" maximum keypoints retained per image.
+    keypoint_max_features: int = 2000
+    #: "keypoint" transform model: "similarity" (rotation+uniform scale+shift,
+    #: default) or "affine" (adds shear/anisotropy).
+    keypoint_motion: str = "similarity"
+    #: "keypoint" Lowe ratio-test threshold (lower = stricter matching).
+    keypoint_ratio: float = 0.75
+    #: "keypoint" minimum good matches / RANSAC inliers required to accept a fit.
+    keypoint_min_matches: int = 8
+    #: "keypoint" RANSAC reprojection tolerance, in pixels.
+    keypoint_ransac_thresh: float = 3.0
     #: Align on upsampled scrub images for sub-pixel accuracy.
     use_scrub: bool = False
     #: Scrub-image upscaling factor when ``use_scrub`` is set.
@@ -310,6 +346,35 @@ class Settings:
                 fit_rotation=a.fit_rotation, fit_scale=a.fit_scale,
                 rotation_max_deg=a.feature_rotation_max_deg,
                 scale_max_pct=a.feature_scale_max_pct,
+            )
+        if a.method == "ecc":
+            from .general_registration import EccAligner
+            return EccAligner(
+                motion=a.ecc_motion, max_iterations=a.ecc_iterations,
+                eps=a.ecc_eps, gauss_blur=a.ecc_gauss_blur, max_shift=a.max_shift,
+            )
+        if a.method == "mi":
+            from .general_registration import MutualInformationAligner
+            # MI needs a bounded search; default to 20 px when max_shift is left
+            # at its "unconstrained" sentinel of 0.
+            return MutualInformationAligner(
+                bins=a.mi_bins, max_shift=a.max_shift if a.max_shift > 0 else 20.0,
+                step=a.mi_step, fit_rotation=a.fit_rotation, fit_scale=a.fit_scale,
+                rotation_max_deg=a.feature_rotation_max_deg,
+                scale_max_pct=a.feature_scale_max_pct,
+            )
+        if a.method == "keypoint":
+            from .general_registration import FeatureMatchAligner
+            return FeatureMatchAligner(
+                detector=a.keypoint_detector, max_features=a.keypoint_max_features,
+                motion=a.keypoint_motion, ratio=a.keypoint_ratio,
+                min_matches=a.keypoint_min_matches,
+                ransac_thresh=a.keypoint_ransac_thresh, max_shift=a.max_shift,
+            )
+        if a.method != "phase":
+            raise ValueError(
+                f"Unknown alignment method {a.method!r}; choose one of "
+                "'phase', 'feature', 'ecc', 'mi', 'keypoint'."
             )
         from .registration import PhaseCorrelationAligner
         return PhaseCorrelationAligner(

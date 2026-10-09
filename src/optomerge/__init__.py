@@ -36,6 +36,11 @@ from .layout import ChannelLayout, ChannelSpec
 from .transform import Transform
 from .registration import Aligner, PhaseCorrelationAligner
 from .feature_registration import FeatureDistanceAligner
+from .general_registration import (
+    EccAligner,
+    FeatureMatchAligner,
+    MutualInformationAligner,
+)
 from .io_backends import MovieReader, MovieWriter, TiffReader, TiffWriter
 from .acceptance import AcceptanceCriteria, AcceptanceResult, evaluate as evaluate_acceptance
 from .calibration import (
@@ -58,6 +63,7 @@ __all__ = [
     "ChannelLayout", "ChannelSpec",
     "Transform",
     "Aligner", "PhaseCorrelationAligner", "FeatureDistanceAligner",
+    "EccAligner", "MutualInformationAligner", "FeatureMatchAligner",
     "MovieReader", "MovieWriter", "TiffReader", "TiffWriter",
     "AcceptanceCriteria", "AcceptanceResult", "evaluate_acceptance",
     "Calibration", "Calibrator", "SingleProjectionCalibrator", "RobustCalibrator",
