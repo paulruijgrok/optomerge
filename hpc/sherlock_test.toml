@@ -1,0 +1,19 @@
+# Sherlock pilot config for the MyLOV1Char test set on $SCRATCH.
+# TOML can't expand $SCRATCH, so the expanded path is written out.
+#   sbatch hpc/optomerge_single.sbatch hpc/sherlock_test.toml
+#
+# CHECK channel_order against the data before the first run ("auto" is unreliable).
+
+[io]
+input = "/scratch/users/ruijgrok/optomerge_test_data/MyLOV1Char"
+output = "/scratch/users/ruijgrok/optomerge_runs/MyLOV1Char/aligned_feature"
+
+[channels]
+channel_order = "top_green_fils_bottom_red_heads"
+
+[alignment]
+method = "feature"
+fit_rotation = true
+
+[runtime]
+reuse_alignment = "none"

@@ -34,6 +34,34 @@ Thread pools are sized from the CPUs actually granted to the job (CPU affinity /
 4. Copy `hpc/example_cluster.toml` to e.g. `my_run.toml` and set **absolute**
    `input` / `output` paths and the dataset's `channel_order`.
 
+### Sherlock (Stanford)
+
+The CentOS 7 login and compute nodes have a glibc too old for current scipy /
+OpenCV wheels, so `pip install -e .` tries to compile scipy and fails (no
+OpenBLAS). Take the compiled dependencies from conda-forge and install optomerge
+itself with `--no-deps`. The group's miniconda has the libmamba solver; the old
+classic solver in the possu base install OOMs at 16 GB on this solve. Build inside
+a job, not on a login node:
+
+```bash
+srun -p dev -c 4 --mem=16G -t 00:30:00 bash -c '
+  export CONDA_PKGS_DIRS=$SCRATCH/cache/conda_pkgs
+  $GROUP_HOME/miniconda/bin/conda create -y -p $GROUP_HOME/envs/optomerge \
+      -c conda-forge --override-channels python=3.11 numpy scipy scikit-image \
+      tifffile opencv pytest matplotlib
+  source $GROUP_HOME/miniconda/etc/profile.d/conda.sh
+  conda activate $GROUP_HOME/envs/optomerge
+  pip install --no-deps -e . && pytest -q'
+```
+
+`hpc/env.sh` picks up `$GROUP_HOME/envs/optomerge` automatically. Keep the env in
+`$GROUP_HOME`, never `$SCRATCH` (purged after 90 days untouched). Inputs and
+outputs go on `$SCRATCH`. A TOML can't expand variables, so write the expanded
+path (`/scratch/users/<sunetid>/...`). `--partition=possu` is the group partition;
+`sh_part` lists the others. `pip check` will report `opencv-python-headless`
+missing because conda's `opencv` provides `cv2` under a different distribution
+name. This is harmless.
+
 Submit **from the repo root**. sbatch runs a spool copy of the script, so the
 scripts find the repo through the submission directory; to submit from elsewhere,
 `export OPTOMERGE_REPO=/path/to/optomerge`.
