@@ -118,7 +118,7 @@ sacct -j <jobid> -o JobID,Elapsed,MaxRSS,AllocCPUS
 | `b1943b6` | Merge `feature/general-aligners` |
 | `3f5c2bc` | SLURM support: `run_optomerge.py`, `grouping.py`, `_kernels/{_parallel,io,transform,processing}.py`, `config.py`, `__init__.py`, `hpc/*`, `tests/test_sharding.py`, `tests/test_io.py`, README |
 | `b651766` | Merge `feature/slurm-hpc` |
-| (this commit) | `journals/` (backfill + this entry), `CLAUDE.md` |
+| `00351e9` | `journals/` (backfill + this entry), `CLAUDE.md` |
 
 ## Open items / next steps
 
