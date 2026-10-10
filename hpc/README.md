@@ -62,6 +62,10 @@ path (`/scratch/users/<sunetid>/...`). `--partition=possu` is the group partitio
 missing because conda's `opencv` provides `cv2` under a different distribution
 name. This is harmless.
 
+Per-dataset run configs and their job scripts live in `hpc/runs/<dataset>/`
+(e.g. `hpc/runs/MyLOV1Char/`: a shared `base.toml` layered under one TOML per
+recording date, because the channel order differs between dates).
+
 Submit **from the repo root**. sbatch runs a spool copy of the script, so the
 scripts find the repo through the submission directory; to submit from elsewhere,
 `export OPTOMERGE_REPO=/path/to/optomerge`.

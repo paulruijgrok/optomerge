@@ -1,0 +1,7 @@
+# MyLOV1Char, recording date 20181002. TOML can't expand $SCRATCH; paths are written out.
+[io]
+input = "/scratch/users/ruijgrok/optomerge_test_data/MyLOV1Char/polarity_labeled/20181002"
+output = "/scratch/users/ruijgrok/optomerge_runs/MyLOV1Char/aligned_feature/20181002"
+
+[channels]
+channel_order = "top_red_heads_bottom_green_fils"

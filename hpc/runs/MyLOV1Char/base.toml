@@ -1,0 +1,15 @@
+# Shared settings for the MyLOV1Char pilot; layered under one per-date file:
+#   run_optomerge.py --config base.toml 20180620.toml
+# The channel order differs between recording dates, so it lives in the
+# per-date files (checked 2026-10-10 by matching each raw movie's halves to its
+# earlier "* RGB.tif" composite: the green/filament channel matched at 0.8-0.99).
+
+[io]
+exclude = ["*RGB*"]   # earlier RGB / fils / ridge / heads outputs sit next to the raw movies
+
+[alignment]
+method = "feature"
+fit_rotation = true
+
+[runtime]
+reuse_alignment = "none"
