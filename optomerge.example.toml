@@ -13,6 +13,7 @@
 [io]
 input = "test_data"                    # root directory of raw movies (scanned recursively)
 output = "output_temp"                 # output root; input folder structure is mirrored
+# exclude = ["*RGB*"]                  # filename globs to skip (e.g. derived files kept next to raw movies)
 suffix = "_aligned"                    # inserted before the .tif extension of each output
 overwrite = false                      # re-process files whose output already exists
 rgb_bitdepth = 8                       # RGB output bit depth: 8 (compact, fixed-range display) | 16

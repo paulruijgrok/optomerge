@@ -24,6 +24,7 @@ Options
                     TOML config file(s), merged left-to-right; CLI flags win.
     --input  DIR    Source directory                       (default: test_data)
     --output DIR    Output directory                        (default: output_temp)
+    --exclude GLOB  Skip input files whose name matches GLOB (repeatable)
     --suffix STR    Suffix inserted before the extension    (default: _aligned)
     --overwrite     Overwrite existing output files
     --rgb-bits 8|16 RGB output bit depth (default: 8; 8-bit is compact and shown
@@ -76,6 +77,7 @@ import os
 import sys
 import time
 import traceback
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 import numpy as np
@@ -136,7 +138,7 @@ _CLI_TO_FIELD = {
     "calibration_mode": "mode",
     "group_by": "by", "group_token": "token_pattern",
     "reuse_alignment": "reuse_alignment", "verbose": "verbose", "dry_run": "dry_run",
-    "workers": "workers",
+    "workers": "workers", "exclude": "exclude",
     "num_shards": "num_shards", "shard_index": "shard_index",
 }
 
@@ -157,10 +159,11 @@ def _setup_logging(log_path: Path, verbose: bool) -> logging.Logger:
     return logger
 
 
-def _collect_tif_files(root: Path) -> list[Path]:
+def _collect_tif_files(root: Path, exclude=()) -> list[Path]:
     return sorted(
         p for p in root.rglob("*")
         if p.suffix.lower() in {".tif", ".tiff"} and p.is_file()
+        and not any(fnmatchcase(p.name, pat) for pat in exclude)
     )
 
 
@@ -381,6 +384,9 @@ def main() -> None:
     parser.add_argument("--input", default=S, metavar="DIR")
     parser.add_argument("--output", default=S, metavar="DIR")
     parser.add_argument("--suffix", default=S, metavar="STR")
+    parser.add_argument("--exclude", action="append", default=S, metavar="GLOB",
+                        help="skip input files whose name matches GLOB, e.g. '*RGB*' "
+                             "(repeatable; replaces the config's [io] exclude list)")
     parser.add_argument("--overwrite", action="store_true", default=S)
     parser.add_argument("--rgb-bits", type=int, default=S, choices=[8, 16], dest="rgb_bits",
                         help="RGB output bit depth (default: 8)")
@@ -489,7 +495,7 @@ def main() -> None:
     if not src_root.is_dir():
         sys.exit(f"ERROR: Input directory not found: {src_root}")
 
-    files = _collect_tif_files(src_root)
+    files = _collect_tif_files(src_root, settings.io.exclude)
     if not files:
         sys.exit(f"No .tif files found under {src_root}")
 
@@ -546,6 +552,8 @@ def main() -> None:
     logger.info("optomerge batch processor (OOP)")
     logger.info(f"  Input  : {src_root}")
     logger.info(f"  Output : {dst_root}")
+    if settings.io.exclude:
+        logger.info(f"  Exclude: {', '.join(settings.io.exclude)}")
     logger.info(f"  Files  : {len(files)}  in {len(groups)} set(s)"
                 + (f"  [{shard_tag} of {n_total} total]" if sharded else ""))
     logger.info(f"  CPUs   : {available_cpus()} available to this process")

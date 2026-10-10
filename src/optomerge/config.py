@@ -27,6 +27,10 @@ class IOSettings:
     input: str = "test_data"
     #: Root directory for aligned output; input folder structure is mirrored.
     output: str = "output_temp"
+    #: Filename glob patterns (case-sensitive, matched against the file name only)
+    #: to skip during input discovery, e.g. derived outputs stored next to raw
+    #: movies: ``["*RGB*"]``. Empty = take every .tif/.tiff.
+    exclude: List[str] = field(default_factory=list)
     #: Suffix inserted before the extension of each output filename.
     suffix: str = "_aligned"
     #: Overwrite existing output files instead of skipping them.

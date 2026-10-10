@@ -130,3 +130,27 @@ def test_sharded_run_matches_single_run_and_resumes(tmp_path):
     assert again.returncode == 0
     log0 = (tmp_path / "sharded" / "run_log_shard000of002.txt").read_text()
     assert "[SKIP] output exists" in log0
+
+
+def test_exclude_globs_skip_derived_files(tmp_path):
+    """--exclude / [io] exclude drop matching names from discovery (case-sensitive,
+    name only), e.g. derived RGB outputs stored next to the raw movies."""
+    src = tmp_path / "in" / "sub"
+    src.mkdir(parents=True)
+    for name in ["raw 01.tif", "raw 01 RGB.tif", "raw 01 RGB_fils_ridge.tif",
+                 "rgb_lower.tif", "paths.npy"]:
+        (src / name).write_bytes(b"")
+
+    def listed(*extra):
+        out = subprocess.run(
+            [sys.executable, str(REPO / "run_optomerge.py"), "--input",
+             str(tmp_path / "in"), "--output", str(tmp_path / "out"), "--dry-run", *extra],
+            capture_output=True, text=True, check=True).stdout
+        return sorted(ln.strip() for ln in out.splitlines()
+                      if ln.strip().endswith(".tif") and "->" not in ln)
+
+    assert len(listed()) == 4
+    assert listed("--exclude", "*RGB*") == ["sub/raw 01.tif", "sub/rgb_lower.tif"]
+    cfg = tmp_path / "c.toml"
+    cfg.write_text('[io]\nexclude = ["*RGB*", "rgb_*"]\n')
+    assert listed("--config", str(cfg)) == ["sub/raw 01.tif"]
