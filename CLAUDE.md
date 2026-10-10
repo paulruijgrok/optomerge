@@ -13,9 +13,20 @@ data-specific heuristics should be opt-in.
 - `hpc/` holds the SLURM scripts (see `hpc/README.md`).
 - `test_pipeline.py` and `profile_pipeline.py` are diagnostics and profiling.
 
+## One project, two machines
+
+The MacBook and Sherlock (Stanford HPC) are one project, kept in sync through
+GitHub (`origin`). Sherlock just runs the work on larger resources. Pull before
+starting a session and push when it ends, on either machine. Don't keep
+machine-local copies of anything that belongs to the project: code, skills,
+journals and `CLAUDE.md` all live in git. Sherlock specifics (env in
+`$GROUP_HOME/envs/optomerge`, data on `$SCRATCH`, `possu` partition) are in
+`hpc/README.md`.
+
 ## Conventions
 
-- Follow the **pipeline-engineering-standards** skill:
+- Follow the **pipeline-engineering-standards** skill
+  (`.claude/skills/pipeline-engineering-standards/`, tracked in the repo):
   - Run the full `pytest` suite before every commit.
   - Write real commit and PR descriptions (what/why, verification, future work).
   - Sweep for dead code before committing.
