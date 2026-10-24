@@ -232,21 +232,10 @@ Outputs in `$SCRATCH/optomerge_runs/MyLOV1Char/`:
   get a note that those numbers predate the two fixes, plus the new pilot
   comparison.
 - The clone `../optomerge-objnorm` can be deleted (merged as `7c3e88f`).
-
-- **P. to eyeball `aligned_feature_v2`**: in particular 20170803 ch08, 20181002
-  ch11 ROI01 02, 20180620 ch15 02, and 20181002 ch12 ROI01 03. Then **merge
-  `feature/sherlock` → `main`** (PR).
-- **R/G metric caveat:** the output R/G balance metric depends on the crop area,
-  so v2 values aren't strictly comparable with the pilot's. 20180620 ch15 02 is
-  still the highest at 1.31.
 - **`reuse_alignment = "first"`** reuses one movie's canvas-frame transform for
   movies whose crop sizes may differ. The transform should be stored in a
   crop-independent frame (raw-frame coordinates).
-- **`vmax` cap** misses outliers larger than 0.1% of the channel; a size-aware
-  rule (e.g. reject bright components above an area) would cover them.
-- **20170803 ch08:** large, bright stationary red aggregates make the moving heads
-  look dim (R/G about 0.2). This is real data, not an outlier by the cap's
-  criterion. Per-frame or percentile display scaling is a possible opt-in.
+- Range mode only: the `vmax` cap misses outliers larger than 0.1% of the channel.
 - Possibly fold the diagnostic into a general `diagnose_run.py` for any
   feature-aligned run.
 - Carried over: `--channel-order auto`, sidecar alignment save/load, GPU,
