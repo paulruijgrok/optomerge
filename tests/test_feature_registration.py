@@ -398,7 +398,7 @@ def test_unequal_crops_land_on_filament_in_merge_canvas():
     """
     pytest.importorskip("scipy")
     from optomerge.channel import Channel
-    from optomerge.calibration import canvas_transform
+    from optomerge.calibration import fit_in_canvas
 
     n = 5
     green = np.zeros((40, 40, n))
@@ -409,8 +409,7 @@ def test_unequal_crops_land_on_filament_in_merge_canvas():
     ref = Channel(green, "green", np.array([[0, 39], [0, 39]]), color="green", reference=True)
     mov = Channel(red, "red", np.array([[0, 29], [0, 35]]), color="red")
     a = FeatureDistanceAligner(max_shift=8, step=1.0)
-    t_fit = a.align(ref, mov)
-    t = canvas_transform(a, t_fit, ref, mov, [ref, mov])
+    t_fit, t = fit_in_canvas(a, ref, mov, [ref, mov])
 
     assert (t.t1 - t_fit.t1, t.t2 - t_fit.t2) == pytest.approx((2.0, 5.0))
     r, c, on = _land_in_canvas(red, green, t)
@@ -420,16 +419,45 @@ def test_unequal_crops_land_on_filament_in_merge_canvas():
     assert not on[r0, c0]
 
 
-def test_canvas_transform_noop_for_equal_crops_and_phase():
-    """Equal even-sized crops need no conversion; phase correlation is never converted."""
-    from optomerge.calibration import canvas_transform
+class _FixedAligner(Aligner):
+    """Returns a fixed transform; records the shapes it was given."""
+
+    def __init__(self, t, **flags):
+        self.t, self.seen = t, None
+        self.__dict__.update(flags)
+
+    def align(self, reference, moving):
+        self.seen = (reference.data.shape[:2], moving.data.shape[:2])
+        return self.t
+
+
+def test_fit_in_canvas_noop_for_equal_crops_and_padded_frame_aligners():
+    """Equal even-sized crops need no conversion; padded-frame aligners are never converted."""
+    from optomerge.calibration import fit_in_canvas
     from optomerge.transform import Transform
 
     t = Transform(t1=1.5, t2=-2.0, rot=0.01, s1=1.0, s2=1.0, score=0.5)
     a_ch = type("C", (), {"data": np.zeros((40, 60, 3))})()
     b_ch = type("C", (), {"data": np.zeros((40, 60, 3))})()
-    out = canvas_transform(FeatureDistanceAligner(), t, a_ch, b_ch, [a_ch, b_ch])
+    _, out = fit_in_canvas(_FixedAligner(t), a_ch, b_ch, [a_ch, b_ch])
     assert (out.t1, out.t2, out.rot) == pytest.approx((t.t1, t.t2, t.rot))
 
     small = type("C", (), {"data": np.zeros((30, 50, 3))})()
-    assert canvas_transform(PhaseCorrelationAligner(), t, a_ch, small, [a_ch, small]) is t
+    raw, out = fit_in_canvas(_FixedAligner(t, fits_padded_frame=True), a_ch, small, [a_ch, small])
+    assert raw is t and out is t
+
+
+def test_equal_shape_aligners_get_trimmed_crops_and_a_converted_transform():
+    """ECC/MI-style aligners see equal top-left crops; the result is converted to the canvas."""
+    from optomerge.channel import Channel
+    from optomerge.calibration import fit_in_canvas
+    from optomerge.transform import Transform
+
+    ref = Channel(np.zeros((40, 40)), "green", np.array([[0, 39], [0, 39]]), reference=True)
+    mov = Channel(np.zeros((30, 36)), "red", np.array([[0, 29], [0, 35]]))
+    a = _FixedAligner(Transform(), needs_equal_shapes=True)
+    _, out = fit_in_canvas(a, ref, mov, [ref, mov])
+    assert a.seen == ((30, 36), (30, 36))
+    # Identity in the trimmed top-left frame = red top-left over green top-left;
+    # in the 64x64 canvas red sits (17, 14) vs green (12, 12): t = (2, 5).
+    assert (out.t1, out.t2) == pytest.approx((2.0, 5.0))

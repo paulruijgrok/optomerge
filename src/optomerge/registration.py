@@ -38,13 +38,19 @@ class Aligner(ABC):
     The other aligners fit on the bare crops, with the moving crop's top-left
     corner over the reference's and rotation about the reference crop's centre
     (False); when the crops differ in size the calibrator converts their
-    transform to the canvas frame (see ``calibration._to_padded_frame``).
+    transform to the canvas frame (see ``calibration.fit_in_canvas``).
+
+    ``needs_equal_shapes`` declares that :meth:`align` can only compare images
+    of one shape (dense intensity methods: ECC, MI). The calibrator then trims
+    both crops to their common top-left region before fitting.
     """
 
     #: Whether :meth:`align` wants per-frame stacks (True) or projections (False).
     needs_frames: bool = False
     #: Whether the returned transform is already in the merge's padded-canvas frame.
     fits_padded_frame: bool = False
+    #: Whether :meth:`align` needs reference and moving crops of equal shape.
+    needs_equal_shapes: bool = False
 
     @abstractmethod
     def align(self, reference: "Channel", moving: "Channel") -> Transform:

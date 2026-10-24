@@ -169,3 +169,28 @@ def test_constructors_validate_arguments():
         FeatureMatchAligner(motion="rigid")
     with pytest.raises(ValueError):
         MutualInformationAligner(max_shift=0)
+
+
+def test_ecc_on_unequal_crops_gives_the_merge_canvas_transform():
+    """ECC needs equal shapes: unequal crops are trimmed, fitted, then converted.
+
+    Both crops are cut from one smooth texture T: green = T[10:50, 10:70] (40x60),
+    red = T[13:46, 12:70] (33x58). Centred in the 64x64 merge canvas, green pixel
+    (R, C) is T[R-2, C+8] and red is T[R-2, C+9], so the merge needs red moved one
+    column right: t = (-1, 0). Before the trim ECC returned identity here.
+    """
+    pytest.importorskip("cv2")
+    scipy_ndimage = pytest.importorskip("scipy.ndimage")
+    from optomerge.calibration import fit_in_canvas
+    from optomerge.channel import Channel
+
+    rng = np.random.default_rng(1)
+    tex = scipy_ndimage.gaussian_filter(rng.random((100, 100)), 3.0)
+    green = Channel(tex[10:50, 10:70], "green", np.array([[0, 39], [0, 59]]), reference=True)
+    red = Channel(tex[13:46, 12:70], "red", np.array([[0, 32], [0, 57]]))
+    for c in (green, red):
+        c.calibrate()
+
+    _, t = fit_in_canvas(EccAligner(motion="translation"), green, red, [green, red])
+    assert t.score > 0.9
+    assert (t.t1, t.t2) == pytest.approx((-1.0, 0.0), abs=0.1)

@@ -113,6 +113,7 @@ class EccAligner(Aligner):
     """
 
     needs_frames = False
+    needs_equal_shapes = True  # dense comparison on one grid
 
     _MOTIONS = {"translation", "euclidean", "affine"}
 
@@ -196,6 +197,7 @@ class MutualInformationAligner(Aligner):
     """
 
     needs_frames = False
+    needs_equal_shapes = True  # dense comparison on one grid
 
     def __init__(
         self,

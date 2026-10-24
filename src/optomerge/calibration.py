@@ -108,15 +108,17 @@ def _to_padded_frame(
     ref_shape: Tuple[int, int],
     mov_shape: Tuple[int, int],
     all_shapes: List[Tuple[int, int]],
+    fit_shape: Optional[Tuple[int, int]] = None,
 ) -> "Transform":
     """Re-express a transform fitted on bare crops in the merge's padded canvas.
 
     Aligners that fit on the bare channel crops place the moving crop's top-left
-    corner over the reference's and rotate about the reference crop's centre.
+    corner over the reference's and rotate about the centre of the image they
+    were given (``fit_shape``; the reference crop unless it was trimmed).
     The merge instead centres each crop in a common power-of-2 canvas (over
     ``all_shapes``) and rotates about the canvas centre. With top-left offsets
-    ``o_ref``/``o_mov`` in the canvas and ``e`` = canvas centre minus the
-    reference crop's centre (0 or 0.5 px), the same mapping in the canvas has
+    ``o_ref``/``o_mov`` in the canvas and ``e`` = canvas centre minus the fit
+    centre, the same mapping in the canvas has
     translation ``t + (o_mov - o_ref) + (M - I) e``; rotation and scale are
     unchanged. Without this, unequal crops leave the moving channel displaced by
     about half the size difference.
@@ -130,26 +132,40 @@ def _to_padded_frame(
     def offset(shape):  # top-left of a centred crop in the canvas, (x, y)
         return np.array([(Q - shape[1]) // 2, (P - shape[0]) // 2], dtype=np.float64)
 
+    fh, fw = fit_shape if fit_shape is not None else ref_shape
     o_ref, o_mov = offset(ref_shape), offset(mov_shape)
     e = (np.array([Q / 2.0 - 0.5, P / 2.0 - 0.5])
-         - (o_ref + np.array([ref_shape[1] / 2.0 - 0.5, ref_shape[0] / 2.0 - 0.5])))
+         - (o_ref + np.array([fw / 2.0 - 0.5, fh / 2.0 - 0.5])))
     m = t.matrix()[:2, :2]
     dt = (o_mov - o_ref) + (m - np.eye(2)) @ e
     return Transform(t1=t.t1 + float(dt[0]), t2=t.t2 + float(dt[1]),
                      rot=t.rot, s1=t.s1, s2=t.s2, score=t.score)
 
 
-def canvas_transform(aligner: Aligner, t: "Transform", reference, moving,
-                     channels) -> "Transform":
-    """``t`` from ``aligner.align(reference, moving)``, in the merge's canvas frame.
+def fit_in_canvas(aligner: Aligner, reference, moving,
+                  channels) -> Tuple["Transform", "Transform"]:
+    """Fit ``moving`` onto ``reference``; return ``(raw fit, merge-canvas transform)``.
 
-    A no-op for aligners that already fit in that frame (``fits_padded_frame``).
     ``channels`` are all the channels that will be merged (they set the canvas).
+    Aligners that need equal shapes (``needs_equal_shapes``: ECC, MI) are given
+    both crops trimmed to their common top-left region, which keeps the
+    "top-left corners together" frame the conversion assumes. The raw fit is
+    in the aligner's own frame (what its diagnostics draw in); the second
+    transform is what the merge applies. For ``fits_padded_frame`` aligners
+    (phase correlation) the two are the same object.
     """
+    ref_shape, mov_shape = reference.data.shape[:2], moving.data.shape[:2]
+    fit_ref, fit_mov, fit_shape = reference, moving, None
+    if getattr(aligner, "needs_equal_shapes", False) and ref_shape != mov_shape:
+        h, w = min(ref_shape[0], mov_shape[0]), min(ref_shape[1], mov_shape[1])
+        fit_ref = reference._copy_meta(reference.data[:h, :w])
+        fit_mov = moving._copy_meta(moving.data[:h, :w])
+        fit_shape = (h, w)
+    t = aligner.align(fit_ref, fit_mov)
     if getattr(aligner, "fits_padded_frame", False):
-        return t
-    return _to_padded_frame(t, reference.data.shape[:2], moving.data.shape[:2],
-                            [c.data.shape[:2] for c in channels])
+        return t, t
+    return t, _to_padded_frame(t, ref_shape, mov_shape,
+                               [c.data.shape[:2] for c in channels], fit_shape)
 
 
 def _build_calibration(
@@ -192,9 +208,8 @@ def _build_calibration(
     transforms: Dict[str, "Transform"] = {}
     for spec in resolved_layout.moving_specs:
         moving = align_channels[spec.name]
-        transforms[spec.name] = canvas_transform(
-            aligner, aligner.align(reference, moving), reference, moving,
-            list(align_channels.values()))
+        _, transforms[spec.name] = fit_in_canvas(aligner, reference, moving,
+                                                 list(align_channels.values()))
 
     result = evaluate(resolved_layout.specs, transforms, mean_proj.shape,
                       criteria or AcceptanceCriteria())

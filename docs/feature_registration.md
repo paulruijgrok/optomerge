@@ -125,11 +125,12 @@ instead centres every crop in a common power-of-2 zero-padded canvas and warps
 there. When the two crops differ in size (common: segmentation rarely returns
 identical red/green bounds) the raw fit would leave red displaced by about half
 the size difference. The calibrator therefore converts the fitted transform to
-the canvas frame (`calibration.canvas_transform`; aligners that already fit in
+the canvas frame (`calibration.fit_in_canvas`; aligners that already fit in
 that frame, like phase correlation, declare `fits_padded_frame = True` and are
-left alone). The keypoint aligner gets the same conversion. ECC and MI still
-need equal crops: on unequal ones they return identity (score 0), which is an
-open item.
+left alone). The keypoint aligner gets the same conversion. ECC and MI compare
+images on one grid (`needs_equal_shapes`), so they are given both crops trimmed
+to their common top-left region and converted the same way; before this they
+silently returned identity on unequal crops.
 `test_unequal_crops_land_on_filament_in_merge_canvas` guards it.
 
 Found on the MyLOV1Char pilot (2026-10-24): before the conversion the residual
