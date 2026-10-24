@@ -194,3 +194,17 @@ def test_ecc_on_unequal_crops_gives_the_merge_canvas_transform():
     _, t = fit_in_canvas(EccAligner(motion="translation"), green, red, [green, red])
     assert t.score > 0.9
     assert (t.t1, t.t2) == pytest.approx((-1.0, 0.0), abs=0.1)
+
+
+def test_mi_coarse_search_has_the_pipeline_sign():
+    """The integer-grid seed alone must already undo the shift (no refinement).
+
+    The seed used to have the wrong sign; refinement recovered on smooth synthetic
+    textures but not on real head/filament data (MyLOV1Char: ~24 px off).
+    """
+    img = _texture()
+    for gx, gy in ((7.0, -5.0), (0.0, -12.0)):
+        ref = _channel(img, reference=True)
+        mov = _channel(_moving(img, gx, gy))
+        t = MutualInformationAligner(max_shift=20, step=1, refine=False).align(ref, mov)
+        assert (t.t1, t.t2) == pytest.approx((-gx, -gy), abs=0.5)

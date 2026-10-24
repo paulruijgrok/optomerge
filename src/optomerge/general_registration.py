@@ -239,19 +239,22 @@ class MutualInformationAligner(Aligner):
                           t1: float, t2: float) -> float:
         """-MI for an integer translation, over the exact valid overlap.
 
-        Mirrors ``transform_image``'s sign convention (applying translation
-        ``(t1, t2)`` samples the moving channel at ``(row - t2, col - t1)``), so
-        the seed matches the continuous refinement and the pipeline.
+        Mirrors ``transform_image``'s sign convention: it is an inverse warp,
+        so applying translation ``(t1, t2)`` samples the moving channel at
+        ``(row + t2, col + t1)`` (a feature moves by ``(-t2, -t1)``). The seed
+        then matches the continuous refinement and the pipeline. (Until
+        2026-10-24 this compared ``moving[r - dy]``: the seed had the wrong
+        sign, which the refinement only sometimes recovered from.)
         """
         dy, dx = int(round(t2)), int(round(t1))
         H, W = ref.shape
-        # Reference[r, c] is compared with moving[r - dy, c - dx]; keep in-bounds.
-        r0, r1 = max(0, dy), min(H, H + dy)
-        c0, c1 = max(0, dx), min(W, W + dx)
+        # Reference[r, c] is compared with moving[r + dy, c + dx]; keep in-bounds.
+        r0, r1 = max(0, -dy), min(H, H - dy)
+        c0, c1 = max(0, -dx), min(W, W - dx)
         if r1 - r0 < 4 or c1 - c0 < 4:
             return 0.0
         ref_crop = ref[r0:r1, c0:c1]
-        mov_crop = mov[r0 - dy:r1 - dy, c0 - dx:c1 - dx]
+        mov_crop = mov[r0 + dy:r1 + dy, c0 + dx:c1 + dx]
         return -self._mi(ref_crop.ravel(), mov_crop.ravel())
 
     def _cost_affine(self, ref: np.ndarray, mov: np.ndarray, ones: np.ndarray,
