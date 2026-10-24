@@ -327,11 +327,15 @@ Known limitations / future work:
 
 - **`--channel-order auto` is unreliable** — it often fails to split the two
   stacked channels; forcing an explicit order is recommended for now.
-- **Output normalisation** uses each channel's despeckled max-projection
-  min/max, with `vmax` capped at `vmin + 2 × (p99.9 − vmin)` (`[processing]
-  norm_cap`, 0 = off) so a single bright aggregate can't dim a whole channel.
-  Caps are logged as `[QC]` lines. The cap doesn't catch outliers that cover
-  more than 0.1% of the channel.
+- **Output normalisation** (`[processing] norm_mode = "objects"`, default)
+  exposes each channel for its typical object. Objects (heads, filaments, ...)
+  are detected in sampled frames at 8 × the noise level, each votes with its
+  peak, and the median peak is shown at `norm_target` (0.5) of full scale.
+  Brighter objects (> 2× the typical one) saturate. A channel with no
+  detectable objects falls back to `"range"` with a `[QC]` note.
+  `norm_mode = "range"` is the original rule: the despeckled max-projection
+  min/max (black background), with `vmax` capped at `vmin + 2 × (p99.9 − vmin)`
+  (`norm_cap`) so one bright aggregate can't dim a whole channel.
 - **Output crop** is geometric by default (`[processing] crop = "footprint"`):
   the region where every channel has data after warping. The legacy
   `crop = "signal"` rule crops sparse movies down to where their objects go.

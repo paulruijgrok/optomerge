@@ -160,12 +160,22 @@ class ProcessingSettings:
     #: 0 = plain min/max after median-despeckle (keeps sparse features like heads);
     #: raise only if a channel still has outliers the median missed.
     norm_exclude: float = 0.0
-    #: Outlier ceiling on each channel's vmax: at most vmin + norm_cap * (p99.9 -
+    #: "range" mode (and the "objects" fallback for a channel without objects):
+    #: outlier ceiling on each channel's vmax: at most vmin + norm_cap * (p99.9 -
     #: vmin) of the despeckled projection, so one bright aggregate can't dim the
     #: whole channel. Only bites on outliers (normal movies sit at 1.2-1.6x);
     #: sparse heads stay unclipped. Logged when applied. 0 = off (plain max).
     #: Catches outliers covering < 0.1% of the channel (~100 px on a 230x480 crop).
     norm_cap: float = 2.0
+    #: How each channel's vmax is set: "objects" (default) shows the channel's
+    #: typical object (median peak above local background over the objects
+    #: detected in sampled frames) at ``norm_target`` of full scale, so both channels are exposed for their
+    #: typical heads/filaments and brighter blobs simply saturate; "range"
+    #: uses the projection max (with ``norm_cap``), the previous behaviour.
+    norm_mode: str = "objects"
+    #: "objects" mode: display level (fraction of full scale) of the typical
+    #: object's peak. 0.5 saturates objects brighter than 2x the typical one.
+    norm_target: float = 0.5
     #: Output crop: "footprint" (default; where the reference and the warped
     #: moving channel both have data -- geometry only) or "signal" (legacy
     #: MATLAB rule: where every channel's time-mean exceeds 0.01, which crops
@@ -432,20 +442,23 @@ class Settings:
         norm_from_max = self.processing.norm_projection == "max"
         norm_exclude = self.processing.norm_exclude
         norm_cap = self.processing.norm_cap
+        norm = dict(norm_mode=self.processing.norm_mode,
+                    norm_target=self.processing.norm_target,
+                    bg_radius=self.processing.bg_radius)
         if c.mode == "robust":
             return RobustCalibrator(
                 layout=layout, aligner=aligner, criteria=criteria,
                 chunk_size=c.chunk_size, min_candidates=c.min_candidates,
                 max_trials=c.max_trials, verbose=self.runtime.verbose,
                 norm_from_max=norm_from_max, norm_exclude=norm_exclude,
-                norm_cap=norm_cap,
+                norm_cap=norm_cap, **norm,
             )
         return SingleProjectionCalibrator(
             layout=layout, aligner=aligner,
             projection_frames=self.channels.projection_frames,
             criteria=criteria, verbose=self.runtime.verbose,
             norm_from_max=norm_from_max, norm_exclude=norm_exclude,
-            norm_cap=norm_cap, feature_frames=self.alignment.feature_frames,
+            norm_cap=norm_cap, feature_frames=self.alignment.feature_frames, **norm,
         )
 
     def to_pipeline_kwargs(self) -> Dict[str, Any]:

@@ -197,6 +197,8 @@ def process_file(
     norm_from_max: bool = True,
     norm_exclude: float = 0.0,
     norm_cap: float = 2.0,
+    norm_mode: str = "objects",
+    norm_target: float = 0.5,
     rgb_bitdepth: int = 8,
     precision: str = "single",
     crop: str = "footprint",
@@ -219,7 +221,8 @@ def process_file(
         dst.parent.mkdir(parents=True, exist_ok=True)
         active = (ConservedCalibrator(shared, projection_frames=projection_frames,
                                       norm_from_max=norm_from_max, norm_exclude=norm_exclude,
-                                      norm_cap=norm_cap)
+                                      norm_cap=norm_cap, norm_mode=norm_mode,
+                                      norm_target=norm_target, bg_radius=bg_radius)
                   if shared is not None else calibrator)
         pipe = MergePipeline(source=src, calibrator=active, bunch_size=bunch_size,
                              bg_radius=bg_radius, projection_frames=projection_frames,
@@ -315,6 +318,8 @@ def _build_pf_kwargs(settings, calibrator, logger) -> dict:
         norm_from_max=settings.processing.norm_projection == "max",
         norm_exclude=settings.processing.norm_exclude,
         norm_cap=settings.processing.norm_cap,
+        norm_mode=settings.processing.norm_mode,
+        norm_target=settings.processing.norm_target,
         rgb_bitdepth=settings.io.rgb_bitdepth,
         precision=settings.processing.precision,
         crop=settings.processing.crop,

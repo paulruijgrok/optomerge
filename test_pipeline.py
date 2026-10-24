@@ -146,10 +146,13 @@ def run_stages(
     sr.layout = candidate.resolve(sr.max_proj, sr.mean_proj, verbose=verbose)
 
     # ── 4. Calibrate + fit alignment transforms ───────────────────────────
-    # Normalisation limits from the (median-despeckled) max projection, exactly
-    # as the pipeline does; alignment from the mean projection.
-    from optomerge.calibration import _compute_limits
-    sr.limits = _compute_limits(sr.layout, sr.max_proj, 0.0)
+    # Normalisation limits exactly as the pipeline's defaults set them (vmin from
+    # the despeckled max projection, vmax from the median object in sampled
+    # frames); alignment from the mean projection.
+    from optomerge.calibration import _compute_limits, _sample_frame_stack
+    sr.limits = _compute_limits(
+        sr.layout, sr.max_proj, 0.0, 2.0, norm_mode="objects", bg_radius=bg_radius,
+        frames=_sample_frame_stack(movie, 40, limit=projection_frames))
     proj_channels = {c.name: c.calibrate() for c in sr.layout.split(sr.mean_proj)}
     if align_method == "feature":
         from optomerge import FeatureDistanceAligner

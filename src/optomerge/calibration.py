@@ -69,28 +69,95 @@ def _despeckle(image: np.ndarray, size: int = 3) -> np.ndarray:
         return np.asarray(image, dtype=np.float64)
 
 
+def _object_amplitude(stack: np.ndarray, k: float = 8.0, min_area: int = 4,
+                      min_objects: int = 5) -> Optional[float]:
+    """Typical peak height of the objects in ``stack`` (heads, filaments, ...).
+
+    ``stack`` is ``(h, w)`` or ``(h, w, n)`` *background-subtracted* frames.
+    Objects are connected components (within a frame, at least ``min_area`` px)
+    of the lightly smoothed (Gaussian, 1 px) frames that exceed the median by
+    ``k`` times the noise (robust MAD sigma of the unsmoothed frames). With
+    ``k = 8`` background noise practically never qualifies, while real objects
+    sit 15-35 sigma up (MyLOV1Char). Each object votes once with its peak (the
+    brightest 3x3 mean), and the median vote is returned, so one large bright
+    aggregate counts no more than one head. Returns ``None`` with fewer than
+    ``min_objects`` objects (an empty channel).
+    """
+    from scipy import ndimage
+
+    s = np.asarray(stack, dtype=np.float64)
+    if s.ndim == 2:
+        s = s[:, :, None]
+    med = float(np.median(s))
+    sigma = 1.4826 * float(np.median(np.abs(s - med)))
+    mask = ndimage.gaussian_filter(s, (1.0, 1.0, 0.0)) > med + k * max(sigma, 1e-12)
+    in_plane = np.zeros((3, 3, 3), dtype=bool)
+    in_plane[:, :, 1] = True                         # 8-connected within a frame only
+    labels, n = ndimage.label(mask, structure=in_plane)
+    if n == 0:
+        return None
+    index = np.arange(1, n + 1)
+    areas = ndimage.sum_labels(np.ones_like(s), labels, index)
+    peaks = ndimage.maximum(ndimage.uniform_filter(s, (3, 3, 1)), labels, index)
+    votes = np.asarray(peaks)[areas >= min_area]
+    if votes.size < min_objects:
+        return None
+    return float(np.median(votes))
+
+
 def _compute_limits(
     resolved_layout: ChannelLayout,
     limit_source: np.ndarray,
     norm_exclude: float,
     norm_cap: float = 0.0,
     notes: Optional[List[str]] = None,
+    norm_mode: str = "range",
+    frames: Optional[np.ndarray] = None,
+    bg_radius: int = 10,
+    norm_target: float = 0.5,
 ) -> Dict[str, Tuple[float, float]]:
-    """Per-channel (vmin, vmax) intensity limits from a projection.
+    """Per-channel (vmin, vmax) intensity limits.
 
-    The projection is median-filtered first (removes cosmic rays without
-    clipping sparse real features), then ``vmin``/``vmax`` are the min/max --
-    or, if ``norm_exclude > 0``, the corresponding percentiles.
-
-    With ``norm_cap > 0``, ``vmax`` is capped at ``vmin + norm_cap * (p99.9 -
-    vmin)``: a bright aggregate far above the channel's real signal would
-    otherwise dim the whole channel. Each cap is described in ``notes``.
+    * ``norm_mode = "objects"``: from the raw sampled ``frames``. ``vmin`` is
+      their 1st percentile, so the merge's lower clip leaves the background
+      intact and background subtraction measures objects from their real local
+      background. ``vmax - vmin`` is the typical object peak (see
+      :func:`_object_amplitude`) divided by ``norm_target``, so after
+      normalisation and background subtraction (as the merge does them) the
+      typical object shows at ``norm_target`` of full scale and anything
+      brighter than ``1 / norm_target`` times it saturates. A channel with no
+      detectable objects falls back to ``"range"`` (noted in ``notes``).
+    * ``norm_mode = "range"`` (the original behaviour): ``vmin``/``vmax`` are
+      the min/max of the median-despeckled projection ``limit_source`` (or, if
+      ``norm_exclude > 0``, the corresponding percentiles). Because a max
+      projection's minimum sits above the typical background, most background
+      is clipped to 0 (a black background). ``norm_cap > 0`` caps ``vmax`` at
+      ``vmin + norm_cap * (p99.9 - vmin)`` so a bright aggregate can't dim the
+      whole channel; each cap is noted in ``notes``.
     """
+    if norm_mode not in ("objects", "range"):
+        raise ValueError(f"norm_mode must be 'objects' or 'range', got {norm_mode!r}.")
+    objects: Dict[str, Tuple[float, Optional[float]]] = {}  # name -> (vmin, amplitude)
+    if norm_mode == "objects" and frames is not None:
+        from ._core import subtract_background
+        for c in resolved_layout.split(frames):
+            data = np.asarray(c.data, dtype=np.float32)
+            amp = _object_amplitude(subtract_background(data, radius=bg_radius))
+            objects[c.name] = (float(np.percentile(data, 1.0)), amp)
+
     despeckled = _despeckle(limit_source)
     limits = {}
     for c in resolved_layout.split(despeckled):
         c.calibrate(exclude_fraction=norm_exclude)
         vmin, vmax = c.vmin, c.vmax
+        if norm_mode == "objects":
+            low, amp = objects.get(c.name, (vmin, None))
+            if amp is not None and amp > 0:
+                limits[c.name] = (low, low + amp / norm_target)
+                continue
+            if notes is not None:
+                notes.append(f"{c.name}: no objects detected for normalisation; "
+                             "used the projection range instead")
         if norm_cap > 0:
             cap = vmin + norm_cap * (float(np.percentile(c.data, 99.9)) - vmin)
             if vmax > cap:
@@ -179,6 +246,10 @@ def _build_calibration(
     norm_exclude: float = 0.0,
     frame_stack: Optional[np.ndarray] = None,
     norm_cap: float = 0.0,
+    norm_mode: str = "range",
+    norm_frames: Optional[np.ndarray] = None,
+    bg_radius: int = 10,
+    norm_target: float = 0.5,
 ) -> Calibration:
     """Fit transforms and package a :class:`Calibration`.
 
@@ -196,7 +267,9 @@ def _build_calibration(
     """
     limit_source = max_proj if norm_from_max else mean_proj
     notes: List[str] = []
-    limits = _compute_limits(resolved_layout, limit_source, norm_exclude, norm_cap, notes)
+    limits = _compute_limits(resolved_layout, limit_source, norm_exclude, norm_cap, notes,
+                             norm_mode=norm_mode, frames=norm_frames,
+                             bg_radius=bg_radius, norm_target=norm_target)
 
     if getattr(aligner, "needs_frames", False) and frame_stack is not None:
         # Per-frame aligner: hand it raw channel stacks (it reads .data directly).
@@ -280,6 +353,10 @@ class SingleProjectionCalibrator(Calibrator):
         norm_exclude: float = 0.0,
         feature_frames: int = 40,
         norm_cap: float = 2.0,
+        norm_mode: str = "objects",
+        norm_target: float = 0.5,
+        bg_radius: int = 10,
+        norm_frames: int = 40,
     ) -> None:
         self.layout = layout or ChannelLayout.auto()
         self.aligner = aligner or PhaseCorrelationAligner()
@@ -290,6 +367,10 @@ class SingleProjectionCalibrator(Calibrator):
         self.norm_exclude = norm_exclude
         self.feature_frames = feature_frames
         self.norm_cap = norm_cap
+        self.norm_mode = norm_mode
+        self.norm_target = norm_target
+        self.bg_radius = bg_radius
+        self.norm_frames = norm_frames
 
     def calibrate(self, movie: "RawMovie") -> Calibration:
         max_proj = movie.max_projection(self.projection_frames)
@@ -299,11 +380,18 @@ class SingleProjectionCalibrator(Calibrator):
         if getattr(self.aligner, "needs_frames", False):
             frame_stack = _sample_frame_stack(movie, self.feature_frames,
                                               limit=self.projection_frames)
+        norm_frames = None
+        if self.norm_mode == "objects":
+            norm_frames = (frame_stack if frame_stack is not None else
+                           _sample_frame_stack(movie, self.norm_frames,
+                                               limit=self.projection_frames))
         return _build_calibration(resolved, max_proj, mean_proj, self.aligner,
                                   self.criteria, gate=self.criteria is not None,
                                   norm_from_max=self.norm_from_max,
                                   norm_exclude=self.norm_exclude,
-                                  frame_stack=frame_stack, norm_cap=self.norm_cap)
+                                  frame_stack=frame_stack, norm_cap=self.norm_cap,
+                                  norm_mode=self.norm_mode, norm_frames=norm_frames,
+                                  bg_radius=self.bg_radius, norm_target=self.norm_target)
 
 
 class ConservedCalibrator(Calibrator):
@@ -317,19 +405,29 @@ class ConservedCalibrator(Calibrator):
 
     def __init__(self, reference: Calibration, projection_frames: Optional[int] = None,
                  norm_from_max: bool = True, norm_exclude: float = 0.0,
-                 norm_cap: float = 2.0) -> None:
+                 norm_cap: float = 2.0, norm_mode: str = "objects",
+                 norm_target: float = 0.5, bg_radius: int = 10,
+                 norm_frames: int = 40) -> None:
         self.reference = reference
         self.projection_frames = projection_frames
         self.norm_from_max = norm_from_max
         self.norm_exclude = norm_exclude
         self.norm_cap = norm_cap
+        self.norm_mode = norm_mode
+        self.norm_target = norm_target
+        self.bg_radius = bg_radius
+        self.norm_frames = norm_frames
 
     def calibrate(self, movie: "RawMovie") -> Calibration:
         layout = self.reference.resolved_layout
         limit_source = (movie.max_projection(self.projection_frames) if self.norm_from_max
                         else movie.mean_projection(self.projection_frames))
         notes: List[str] = []
-        limits = _compute_limits(layout, limit_source, self.norm_exclude, self.norm_cap, notes)
+        frames = (_sample_frame_stack(movie, self.norm_frames, limit=self.projection_frames)
+                  if self.norm_mode == "objects" else None)
+        limits = _compute_limits(layout, limit_source, self.norm_exclude, self.norm_cap, notes,
+                                 norm_mode=self.norm_mode, frames=frames,
+                                 bg_radius=self.bg_radius, norm_target=self.norm_target)
         return Calibration(
             resolved_layout=layout,
             transforms=dict(self.reference.transforms),
@@ -377,6 +475,10 @@ class RobustCalibrator(Calibrator):
         norm_from_max: bool = True,
         norm_exclude: float = 0.0,
         norm_cap: float = 2.0,
+        norm_mode: str = "objects",
+        norm_target: float = 0.5,
+        bg_radius: int = 10,
+        norm_frames: int = 40,
     ) -> None:
         self.layout = layout or ChannelLayout.auto()
         self.aligner = aligner or PhaseCorrelationAligner()
@@ -388,6 +490,10 @@ class RobustCalibrator(Calibrator):
         self.norm_from_max = norm_from_max
         self.norm_exclude = norm_exclude
         self.norm_cap = norm_cap
+        self.norm_mode = norm_mode
+        self.norm_target = norm_target
+        self.bg_radius = bg_radius
+        self.norm_frames = norm_frames
 
     def _log(self, msg: str) -> None:
         if self.verbose:
@@ -404,7 +510,9 @@ class RobustCalibrator(Calibrator):
                 self.layout, self.aligner, projection_frames=None,
                 criteria=self.criteria, verbose=self.verbose,
                 norm_from_max=self.norm_from_max, norm_exclude=self.norm_exclude,
-                norm_cap=self.norm_cap,
+                norm_cap=self.norm_cap, norm_mode=self.norm_mode,
+                norm_target=self.norm_target, bg_radius=self.bg_radius,
+                norm_frames=self.norm_frames,
             ).calibrate(movie)
             if not single.accepted:
                 raise AlignmentNotFoundError(
@@ -425,11 +533,18 @@ class RobustCalibrator(Calibrator):
                 max_proj = bunch.max_projection()
                 mean_proj = bunch.mean_projection()
                 resolved = self.layout.resolve(max_proj, mean_proj, verbose=False)
+                norm_frames = None
+                if self.norm_mode == "objects":
+                    n = bunch.data.shape[2]
+                    idx = np.unique(np.linspace(0, n - 1, min(self.norm_frames, n)).astype(int))
+                    norm_frames = bunch.data[:, :, idx]
                 cal = _build_calibration(resolved, max_proj, mean_proj, self.aligner,
                                          self.criteria, gate=True,
                                          norm_from_max=self.norm_from_max,
                                          norm_exclude=self.norm_exclude,
-                                         norm_cap=self.norm_cap)
+                                         norm_cap=self.norm_cap, norm_mode=self.norm_mode,
+                                         norm_frames=norm_frames, bg_radius=self.bg_radius,
+                                         norm_target=self.norm_target)
             except Exception as exc:  # a bad block shouldn't sink the movie
                 self._log(f"  block @{bunch.start_index}: skipped ({exc})")
                 continue  # counts as a trial (guards against an all-bad movie)

@@ -11,8 +11,10 @@ exactly as the pilot did (same base.toml + per-date TOML), then measures:
 * the residual red-vs-green offset measured directly in the written output
   (heads in R fitted onto the green-filament centreline);
 * the red-vs-green offset relative to the lab's earlier "* RGB.tif" composite;
-* intensity: vmax vs robust percentiles of the despeckled max projection, and the
-  red/green balance of our output and of the old composite.
+* intensity: vmax vs robust percentiles of the despeckled max projection, the
+  red/green balance of our output and of the old composite, and per channel the
+  typical object level in the output (one vote per object, as "objects"
+  normalisation sets it) with the fraction of object pixels that saturate.
 
 Writes summary.csv and one PNG per movie plus summary.png into OUTDIR.
 
@@ -247,6 +249,12 @@ def analyse(raw_path: str, date: str, outdir: str, aligned: str = "aligned_featu
     rec.update(out_RG_mean=bal["mean"], out_RG_frame=bal["frame"],
                out_sat_R=float((ours[idx, :, :, 0] == 255).mean()),
                out_sat_G=float((ours[idx, :, :, 1] == 255).mean()))
+    from optomerge.calibration import _object_amplitude
+    for c, name in ((0, "R"), (1, "G")):
+        stack = np.moveaxis(o_frames[..., c], 0, 2)          # already bg-subtracted
+        rec[f"out_obj_{name}"] = _object_amplitude(stack) or float("nan")
+        bright = stack[stack > 0.25 * 255]
+        rec[f"out_objsat_{name}"] = float((bright >= 255).mean()) if bright.size else float("nan")
 
     # residual offset in the written output (translation only, both objectives)
     og = SimpleNamespace(data=np.moveaxis(o_frames[..., 1], 0, 2))
