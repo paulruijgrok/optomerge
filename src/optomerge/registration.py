@@ -30,10 +30,21 @@ class Aligner(ABC):
     that sets ``needs_frames = True`` is instead given channels whose ``data`` is
     a ``(h, w, n)`` stack of sampled raw frames, so it can reason per frame (e.g.
     the feature-distance aligner, which needs each frame's head positions).
+
+    ``fits_padded_frame`` declares the coordinate frame of the returned
+    transform. The merge centres every channel crop in a common zero-padded
+    canvas and applies the transform there. Phase correlation pads the pair the
+    same way before fitting, so its transform is already in that frame (True).
+    The other aligners fit on the bare crops, with the moving crop's top-left
+    corner over the reference's and rotation about the reference crop's centre
+    (False); when the crops differ in size the calibrator converts their
+    transform to the canvas frame (see ``calibration._to_padded_frame``).
     """
 
     #: Whether :meth:`align` wants per-frame stacks (True) or projections (False).
     needs_frames: bool = False
+    #: Whether the returned transform is already in the merge's padded-canvas frame.
+    fits_padded_frame: bool = False
 
     @abstractmethod
     def align(self, reference: "Channel", moving: "Channel") -> Transform:
@@ -64,6 +75,8 @@ class PhaseCorrelationAligner(Aligner):
         Default 0 = unconstrained. When ``use_scrub`` is set the constraint is
         scaled by ``upscale`` to match the enlarged scrub-space coordinates.
     """
+
+    fits_padded_frame = True  # calculate_alignment centre-pads the pair itself
 
     def __init__(
         self,

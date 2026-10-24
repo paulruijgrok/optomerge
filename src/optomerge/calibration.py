@@ -84,6 +84,55 @@ def _compute_limits(
     return {name: (c.vmin, c.vmax) for name, c in chans.items()}
 
 
+def _to_padded_frame(
+    t: "Transform",
+    ref_shape: Tuple[int, int],
+    mov_shape: Tuple[int, int],
+    all_shapes: List[Tuple[int, int]],
+) -> "Transform":
+    """Re-express a transform fitted on bare crops in the merge's padded canvas.
+
+    Aligners that fit on the bare channel crops place the moving crop's top-left
+    corner over the reference's and rotate about the reference crop's centre.
+    The merge instead centres each crop in a common power-of-2 canvas (over
+    ``all_shapes``) and rotates about the canvas centre. With top-left offsets
+    ``o_ref``/``o_mov`` in the canvas and ``e`` = canvas centre minus the
+    reference crop's centre (0 or 0.5 px), the same mapping in the canvas has
+    translation ``t + (o_mov - o_ref) + (M - I) e``; rotation and scale are
+    unchanged. Without this, unequal crops leave the moving channel displaced by
+    about half the size difference.
+    """
+    from ._kernels.transform import _next_pow2
+    from .transform import Transform
+
+    P = _next_pow2(max(s[0] for s in all_shapes))
+    Q = _next_pow2(max(s[1] for s in all_shapes))
+
+    def offset(shape):  # top-left of a centred crop in the canvas, (x, y)
+        return np.array([(Q - shape[1]) // 2, (P - shape[0]) // 2], dtype=np.float64)
+
+    o_ref, o_mov = offset(ref_shape), offset(mov_shape)
+    e = (np.array([Q / 2.0 - 0.5, P / 2.0 - 0.5])
+         - (o_ref + np.array([ref_shape[1] / 2.0 - 0.5, ref_shape[0] / 2.0 - 0.5])))
+    m = t.matrix()[:2, :2]
+    dt = (o_mov - o_ref) + (m - np.eye(2)) @ e
+    return Transform(t1=t.t1 + float(dt[0]), t2=t.t2 + float(dt[1]),
+                     rot=t.rot, s1=t.s1, s2=t.s2, score=t.score)
+
+
+def canvas_transform(aligner: Aligner, t: "Transform", reference, moving,
+                     channels) -> "Transform":
+    """``t`` from ``aligner.align(reference, moving)``, in the merge's canvas frame.
+
+    A no-op for aligners that already fit in that frame (``fits_padded_frame``).
+    ``channels`` are all the channels that will be merged (they set the canvas).
+    """
+    if getattr(aligner, "fits_padded_frame", False):
+        return t
+    return _to_padded_frame(t, reference.data.shape[:2], moving.data.shape[:2],
+                            [c.data.shape[:2] for c in channels])
+
+
 def _build_calibration(
     resolved_layout: ChannelLayout,
     max_proj: np.ndarray,
@@ -121,7 +170,10 @@ def _build_calibration(
 
     transforms: Dict[str, "Transform"] = {}
     for spec in resolved_layout.moving_specs:
-        transforms[spec.name] = aligner.align(reference, align_channels[spec.name])
+        moving = align_channels[spec.name]
+        transforms[spec.name] = canvas_transform(
+            aligner, aligner.align(reference, moving), reference, moving,
+            list(align_channels.values()))
 
     result = evaluate(resolved_layout.specs, transforms, mean_proj.shape,
                       criteria or AcceptanceCriteria())

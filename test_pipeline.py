@@ -164,9 +164,14 @@ def run_stages(
         aligner = PhaseCorrelationAligner(use_scrub=use_scrub, upscale=upscale,
                                           max_shift=max_shift, fit_scale_rotation=fit_scale_rotation)
         align_channels = proj_channels
+    from optomerge.calibration import canvas_transform
     reference = next(c for c in align_channels.values() if c.reference)
+    fitted = {}  # in the aligner's own (bare-crop) frame, for the feature overlay
     for spec in sr.layout.moving_specs:
-        sr.transforms[spec.name] = aligner.align(reference, align_channels[spec.name])
+        moving = align_channels[spec.name]
+        fitted[spec.name] = aligner.align(reference, moving)
+        sr.transforms[spec.name] = canvas_transform(
+            aligner, fitted[spec.name], reference, moving, list(align_channels.values()))
 
     for name, t in sr.transforms.items():
         print(f"         {name}: t=({t.t1:.3f},{t.t2:.3f})  "
@@ -182,7 +187,7 @@ def run_stages(
             mov_name = next(s.name for s in sr.layout.moving_specs)
             save_diag_feature_detection(
                 aligner, align_channels[ref_name], align_channels[mov_name],
-                sr.transforms[mov_name], out_dir, stem,
+                fitted[mov_name], out_dir, stem,
             )
 
     if not merge:

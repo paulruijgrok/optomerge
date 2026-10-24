@@ -18,6 +18,7 @@ Writes summary.csv and one PNG per movie plus summary.png into OUTDIR.
 
 Usage (inside a job, from the repo root):
     python hpc/runs/MyLOV1Char/diagnose_alignment.py OUTDIR [--workers N] [--only SUBSTR]
+        [--aligned aligned_feature]
 """
 from __future__ import annotations
 
@@ -143,7 +144,7 @@ def _balance(rgb_mean, rgb_frames):
 # per-movie analysis
 # --------------------------------------------------------------------------- #
 
-def analyse(raw_path: str, date: str, outdir: str) -> dict:
+def analyse(raw_path: str, date: str, outdir: str, aligned: str = "aligned_feature") -> dict:
     import cv2
     cv2.setNumThreads(1)
     import tifffile
@@ -156,7 +157,7 @@ def analyse(raw_path: str, date: str, outdir: str) -> dict:
     cal = settings.build_calibrator()
     al = cal.aligner
     in_root = Path(settings.io.input)
-    out_root = Path(settings.io.output)
+    out_root = Path(settings.io.output).parent.parent / aligned / date
     rel = raw.relative_to(in_root)
     ours_path = out_root / rel.parent / (raw.stem + "_aligned.tif")
     old_path = raw.with_name(raw.stem + " RGB.tif")
@@ -355,6 +356,8 @@ def main() -> None:
     ap.add_argument("outdir")
     ap.add_argument("--workers", type=int, default=int(os.environ.get("SLURM_CPUS_PER_TASK", 4)))
     ap.add_argument("--only", default=None, help="only movies whose path contains this")
+    ap.add_argument("--aligned", default="aligned_feature",
+                    help="output folder (next to aligned_feature) holding the movies to check")
     args = ap.parse_args()
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -373,7 +376,7 @@ def main() -> None:
 
     rows = []
     with ProcessPoolExecutor(args.workers) as ex:
-        futs = {ex.submit(analyse, f, d, str(outdir)): f for f, d in jobs}
+        futs = {ex.submit(analyse, f, d, str(outdir), args.aligned): f for f, d in jobs}
         for fut in as_completed(futs):
             try:
                 r = fut.result()

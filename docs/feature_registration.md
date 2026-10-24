@@ -117,6 +117,24 @@ image centre `(W/2−0.5, H/2−0.5)`, matching the matrix `transform_image` bui
 predicted landing against where `transform_image` actually moves a head, for
 several rotation/anisotropic-scale/translation combinations.
 
+### Fit frame vs merge canvas
+
+The aligner fits on the bare channel crops: the red crop's top-left corner sits
+over the green crop's, and rotation is about the green crop's centre. The merge
+instead centres every crop in a common power-of-2 zero-padded canvas and warps
+there. When the two crops differ in size (common: segmentation rarely returns
+identical red/green bounds) the raw fit would leave red displaced by about half
+the size difference. The calibrator therefore converts the fitted transform to
+the canvas frame (`calibration.canvas_transform`; aligners that already fit in
+that frame, like phase correlation, declare `fits_padded_frame = True` and are
+left alone). The keypoint aligner gets the same conversion. ECC and MI still
+need equal crops: on unequal ones they return identity (score 0), which is an
+open item.
+`test_unequal_crops_land_on_filament_in_merge_canvas` guards it.
+
+Found on the MyLOV1Char pilot (2026-10-24): before the conversion the residual
+red offset was up to 6 px (median 1.4 px); after it, median 0.37 px, max 0.74 px.
+
 ## Roadmap / future work
 
 - **Anisotropic scale.** Rotation + *isotropic* scale are implemented (see

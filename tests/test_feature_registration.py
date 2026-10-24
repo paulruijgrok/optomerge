@@ -372,3 +372,64 @@ def test_end_to_end_recovers_shift():
     assert 19 <= r_land <= 21, f"head landed at row {r_land}, not on the bar (19-21)"
     assert 5 <= c_land <= 34
     assert np.isfinite(t.score)
+
+
+# --------------------------------------------------------------------------- #
+# Fit frame vs the merge's padded canvas (unequal channel crops)
+# --------------------------------------------------------------------------- #
+
+def _land_in_canvas(red, green, t):
+    """Where the red head lands after the merge's pad + warp (RGBMovie.from_channels)."""
+    from optomerge._kernels.transform import zero_pad_images
+    red_pad, green_pad = zero_pad_images(red[:, :, 0], green[:, :, 0])
+    warped = t.apply(red_pad)
+    r, c = np.unravel_index(int(np.argmax(warped)), warped.shape)
+    on = green_pad > 0
+    return r, c, on
+
+
+def test_unequal_crops_land_on_filament_in_merge_canvas():
+    """A feature fit on unequal crops must land the head on the filament *in the merge*.
+
+    The aligner fits with the crops' top-left corners together; the merge centres
+    each crop in a power-of-2 canvas. Here the red crop is 10 rows / 4 cols
+    smaller, so the raw fit leaves the head (5, 2) px off; the canvas conversion
+    must remove that. Regression guard for the MyLOV1Char pilot offset.
+    """
+    pytest.importorskip("scipy")
+    from optomerge.channel import Channel
+    from optomerge.calibration import canvas_transform
+
+    n = 5
+    green = np.zeros((40, 40, n))
+    green[18:23, 18:23, :] = 6.0                       # 5x5 "filament" at rows/cols 18-22
+    red = np.zeros((30, 36, n))
+    red[23:26, 22:25, :] = 9.0                         # 3x3 head centred at (24, 23)
+
+    ref = Channel(green, "green", np.array([[0, 39], [0, 39]]), color="green", reference=True)
+    mov = Channel(red, "red", np.array([[0, 29], [0, 35]]), color="red")
+    a = FeatureDistanceAligner(max_shift=8, step=1.0)
+    t_fit = a.align(ref, mov)
+    t = canvas_transform(a, t_fit, ref, mov, [ref, mov])
+
+    assert (t.t1 - t_fit.t1, t.t2 - t_fit.t2) == pytest.approx((2.0, 5.0))
+    r, c, on = _land_in_canvas(red, green, t)
+    assert on[r, c], f"head landed at canvas ({r}, {c}), off the filament"
+    # Without the conversion the head misses (shows the test would catch the bug).
+    r0, c0, _ = _land_in_canvas(red, green, t_fit)
+    assert not on[r0, c0]
+
+
+def test_canvas_transform_noop_for_equal_crops_and_phase():
+    """Equal even-sized crops need no conversion; phase correlation is never converted."""
+    from optomerge.calibration import canvas_transform
+    from optomerge.transform import Transform
+
+    t = Transform(t1=1.5, t2=-2.0, rot=0.01, s1=1.0, s2=1.0, score=0.5)
+    a_ch = type("C", (), {"data": np.zeros((40, 60, 3))})()
+    b_ch = type("C", (), {"data": np.zeros((40, 60, 3))})()
+    out = canvas_transform(FeatureDistanceAligner(), t, a_ch, b_ch, [a_ch, b_ch])
+    assert (out.t1, out.t2, out.rot) == pytest.approx((t.t1, t.t2, t.rot))
+
+    small = type("C", (), {"data": np.zeros((30, 50, 3))})()
+    assert canvas_transform(PhaseCorrelationAligner(), t, a_ch, small, [a_ch, small]) is t

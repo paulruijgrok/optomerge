@@ -31,6 +31,7 @@ from pathlib import Path
 _here = Path(__file__).resolve().parent
 
 from optomerge import RawMovie, RGBMovie, Settings
+from optomerge.calibration import canvas_transform
 
 # argparse dests -> flat Settings fields (all default to argparse.SUPPRESS so
 # only explicitly-passed flags override the config file). `file` is script-only.
@@ -103,7 +104,9 @@ def profile(src: Path, settings: Settings):
         limits = {n: (c.vmin, c.vmax) for n, c in proj_channels.items()}
         reference = next(c for c in proj_channels.values() if c.reference)
         transforms = {
-            spec.name: aligner.align(reference, proj_channels[spec.name])
+            spec.name: canvas_transform(
+                aligner, aligner.align(reference, proj_channels[spec.name]),
+                reference, proj_channels[spec.name], list(proj_channels.values()))
             for spec in layout.moving_specs
         }
     for name, t in transforms.items():
