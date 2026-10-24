@@ -131,7 +131,12 @@ used 12 CPUs.
 | `40a15fb` | `journals/2026-10-10_…`, `hpc/runs/MyLOV1Char/diagnose_alignment.py` |
 | `41b4b37` | `registration.py` (`fits_padded_frame`), `calibration.py` (`canvas_transform`), `test_pipeline.py`, `profile_pipeline.py`, `docs/feature_registration.md`, tests; `--aligned` in the diagnostic |
 | `e997fe4` | `movie.py` (`_footprint_crop`), `pipeline.py`, `calibration.py` (`norm_cap`, `notes`), `config.py`, `run_optomerge.py`, `optomerge.example.toml`, README, `tests/test_crop_and_limits.py` |
-| (this) | this journal |
+| `64b1d86` | this journal (part 1) |
+| `b456e6a` | ECC/MI equal-shape trimming (`fit_in_canvas`) |
+| `26bc5b8` | `compare_aligners.sbatch` |
+| `bd722ff` | MI coarse-search sign fix |
+| `76b5a90` / `7c3e88f` | objects normalisation / merge |
+| `59fb6c0` | `RGBMovie` docstring |
 
 Outputs are in `$SCRATCH/optomerge_runs/MyLOV1Char/`:
 - `aligned_feature/`: the original pilot
@@ -140,7 +145,93 @@ Outputs are in `$SCRATCH/optomerge_runs/MyLOV1Char/`:
 - `diagnostics_2026-10-24{,_padfix,_v2}/`
 - `scratch_scripts/footprint.py`: a one-off comparison of footprint vs old crops
 
+## Part 2 (same day): ECC/MI on unequal crops, MI sign bug, "objects" normalisation
+
+P. asked to (1) fix the unequal-crop handling for ECC and MI and compare them on
+the pilot, and (2) set brightness from the typical intensity of the
+heads/filaments, letting very bright blobs saturate.
+
+### ECC/MI (`b456e6a`, `bd722ff`)
+- **Unequal crops.** `Aligner.needs_equal_shapes` is now True for ECC and MI.
+  `calibration.fit_in_canvas` (which replaces `canvas_transform`) trims both
+  crops to their common top-left region, fits, and converts to the canvas.
+  - New test: ECC on unequal crops recovers the exact canvas transform.
+- **MI sign bug** (pre-existing). The coarse translation grid compared
+  `moving[r - dy]` instead of `moving[r + dy]`, so its seed had the opposite
+  sign.
+  - The refinement rescued it on smooth synthetic textures, which is why the old
+    test passed, but not on real data (about 24 px off on 20170803).
+  - Fixed, with a test of the coarse search alone (`refine=False`).
+  - The July MI comparison in `docs/general_registration.md` predates both fixes,
+    and with unequal crops MI returned identity anyway.
+- **Comparison on the pilot**
+  (`hpc/runs/MyLOV1Char/compare_aligners.sbatch`, jobs 49386587 and 49393166):
+
+  | | Median red offset | Max | Movies > 1 px | vs old composites (median) |
+  |---|---|---|---|---|
+  | feature | 0.24 px | 0.49 px | 0/27 | 0.57 px |
+  | ECC | 1.10 px | 4.38 px | 16/26 (1 rejected: rot 2.19°) | 1.70 px |
+  | MI (fixed) | 1.59 px | 11.3 px | 18/27 | 1.70 px |
+
+  Feature is the right method for head/filament data. The residual measure may
+  favour it, but the old-composite check is independent and gives the same
+  ranking. ECC and MI may still suit OptoSplit data with similar structure in
+  both channels.
+
+### "objects" normalisation (`76b5a90`, merged as `7c3e88f`)
+Developed in a local clone (`../optomerge-objnorm`, branch
+`feature/object-norm`) so the running comparison jobs weren't affected; this
+system's git 1.8 has no `worktree`.
+
+- **New default:** `[processing] norm_mode = "objects"` with `norm_target = 0.5`.
+  `"range"` is the previous rule.
+- **How it works:**
+  - Objects are components (≥ 4 px) of the background-subtracted,
+    Gaussian(1)-smoothed sampled frames above median + 8 × the raw noise σ.
+  - Each object votes with its peak (brightest 3×3 mean); the typical object is
+    the median vote.
+  - `vmin` is p1 of the frames; `vmax − vmin` = typical peak / 0.5.
+- **Three issues found and fixed on the way:**
+  1. *Clipping before background subtraction.* The merge clipped at 1 before
+     subtracting the background. `Channel.normalized(clip_high=False)` now lets
+     the writer clip instead.
+  2. *Detector found noise.* The first detector (3×3 median, 4σ, pixel or
+     component median) mostly found noise blobs: 70–320 per frame at about 4×
+     the noise. Overlays confirmed that the 8σ detector marks exactly the heads
+     and filaments.
+  3. *`vmin` clipped the background.* With the range-mode `vmin` (min of the max
+     projection), 87–94% of raw pixels sat below it and were clipped to 0, so
+     objects were measured from the wrong level.
+- **Result on the pilot** (`aligned_feature_v3d`, 27/27 ok):
+
+  | | range mode (v2) | objects mode (v3d) | Target |
+  |---|---|---|---|
+  | Green typical object (0–255) | 68 | 120 [108–127] | 128 |
+  | Red typical object (0–255) | 83 | 119 [99–175] | 128 |
+  | R/G | 1.25 | 1.00 [0.80–1.63] | 1 |
+
+  - End-to-end trace on one movie: calibration 209/190 raw counts vs output
+    199/208.
+  - Object pixels saturated: 2–7%, and 13% for 20170803 ch08 red (large bright
+    stationary aggregates, as intended).
+- **Tests:** 169 passed, 1 skipped.
+
+Outputs in `$SCRATCH/optomerge_runs/MyLOV1Char/`:
+- `aligned_ecc/`, `aligned_mi/`, `aligned_feature_v3{,b,c,d}/`
+- `diagnostics_{ecc,mi,objnorm_*}/`
+- `scratch_scripts/{object_levels,object_detectors*,trace_green}.py`
+  (one-off analysis)
+
 ## Open items / next steps
+
+- **P. to look at `aligned_feature_v3d`**, the current defaults (all fixes plus
+  objects normalisation), rather than v2. Then merge `feature/sherlock` →
+  `main`.
+- `norm_target = 0.5` is a first choice; P. may prefer more or less headroom.
+- The ECC/MI results doc (`docs/general_registration.md`, July section) should
+  get a note that those numbers predate the two fixes, plus the new pilot
+  comparison.
+- The clone `../optomerge-objnorm` can be deleted (merged as `7c3e88f`).
 
 - **P. to eyeball `aligned_feature_v2`**: in particular 20170803 ch08, 20181002
   ch11 ROI01 02, 20180620 ch15 02, and 20181002 ch12 ROI01 03. Then **merge
@@ -148,8 +239,6 @@ Outputs are in `$SCRATCH/optomerge_runs/MyLOV1Char/`:
 - **R/G metric caveat:** the output R/G balance metric depends on the crop area,
   so v2 values aren't strictly comparable with the pilot's. 20180620 ch15 02 is
   still the highest at 1.31.
-- **ECC/MI on unequal crops** silently return identity: pad or crop both channels
-  to a common shape before fitting, then convert.
 - **`reuse_alignment = "first"`** reuses one movie's canvas-frame transform for
   movies whose crop sizes may differ. The transform should be stored in a
   crop-independent frame (raw-frame coordinates).
