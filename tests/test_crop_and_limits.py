@@ -87,3 +87,95 @@ def test_footprint_crop_trims_what_the_warp_leaves_uncovered():
 def test_unknown_crop_rule_is_rejected():
     with pytest.raises(ValueError):
         RGBMovie.from_channels(_sparse_pair(), {"red": Transform()}, crop="tight")
+
+
+# --------------------------------------------------------------------------- #
+# "objects" normalisation
+# --------------------------------------------------------------------------- #
+
+def _object_frames(n=6, amp=200.0, bright=None):
+    """Noisy background (~100) with a few 3x3 objects of height ``amp``; optional bright blob."""
+    rng = np.random.default_rng(2)
+    f = 100.0 + rng.normal(0, 3, (80, 80, n))
+    for k in range(n):
+        for r, c in ((10 + 5 * k, 15), (40, 10 + 6 * k), (60, 60)):
+            f[r:r + 3, c:c + 3, k] += amp
+    if bright is not None:
+        f[20:25, 50:55, :] += bright
+    return f
+
+
+def test_object_amplitude_finds_the_typical_object_height():
+    pytest.importorskip("scipy")
+    from optomerge.calibration import _object_amplitude
+    from optomerge._core import subtract_background
+    amp = _object_amplitude(subtract_background(_object_frames().astype(np.float32), radius=5))
+    assert amp == pytest.approx(200.0, rel=0.1)
+
+
+def test_objects_mode_puts_the_median_object_at_the_target_and_saturates_blobs():
+    """End to end through the merge: typical objects at 0.5, a 20x blob just saturates.
+
+    The blob has nearly as many pixels as all the objects together, so a
+    per-pixel median would land on it; one vote per object must not.
+    """
+    pytest.importorskip("scipy")
+    frames = _object_frames(bright=4000.0)
+    limits = _compute_limits(_OneChannelLayout(), frames.max(axis=2), 0.0, 2.0,
+                             norm_mode="objects", frames=frames, bg_radius=5, norm_target=0.5)
+    ch = _OneChannelLayout().split(frames)[0]
+    ch.vmin, ch.vmax = limits["green"]
+    out = RGBMovie.from_channels([ch], {}, bg_radius=5).to_array()[:, :, 1, :]
+    assert np.median(out[61, 61, :]) == pytest.approx(0.5, abs=0.06)   # an object centre
+    assert out[22, 52, :].min() >= 1.0                                 # the blob saturates
+
+
+def test_objects_mode_falls_back_to_range_for_an_empty_channel():
+    pytest.importorskip("scipy")
+    rng = np.random.default_rng(3)
+    frames = 100.0 + rng.normal(0, 3, (80, 80, 6))
+    notes = []
+    vmin, vmax = _compute_limits(_OneChannelLayout(), frames.max(axis=2), 0.0, 2.0, notes,
+                                 norm_mode="objects", frames=frames, bg_radius=5)["green"]
+    assert "no objects detected" in notes[0]
+    assert vmax <= frames.max() + 1e-9
+
+
+def test_objects_on_a_raised_background_still_reach_the_target():
+    """Uneven illumination: objects on a bright background patch must not be clipped flat.
+
+    The merge normalises before background subtraction; with an "objects" vmax
+    (well below background + object) an upper clip there would flatten them.
+    """
+    pytest.importorskip("scipy")
+    frames = _object_frames()
+    frames[30:80, 30:80, :] += 800.0                     # bright half of the field
+    limits = _compute_limits(_OneChannelLayout(), frames.max(axis=2), 0.0, 2.0,
+                             norm_mode="objects", frames=frames, bg_radius=5, norm_target=0.5)
+    ch = _OneChannelLayout().split(frames)[0]
+    ch.vmin, ch.vmax = limits["green"]
+    out = RGBMovie.from_channels([ch], {}, bg_radius=5).to_array()[:, :, 1, :]
+    assert np.median(out[61, 61, :]) == pytest.approx(0.5, abs=0.06)   # object on the patch
+
+
+def test_objects_mode_keeps_noisy_background_out_of_the_lower_clip():
+    """vmin must sit below the per-frame background, not at the max projection's minimum.
+
+    With real noise, the max projection's minimum is ~3 sigma above the typical
+    background (MyLOV1Char: 87-94 % of raw pixels below it). Clipping there
+    measures objects from that level instead of from their local background.
+    """
+    pytest.importorskip("scipy")
+    rng = np.random.default_rng(4)
+    frames = 1000.0 + rng.normal(0, 20, (80, 80, 40))
+    for k in range(40):
+        for r, c in ((10, 10 + k), (40 + k // 2, 30), (60, 60)):
+            frames[r:r + 3, c:c + 3, k] += 300.0
+    limits = _compute_limits(_OneChannelLayout(), frames.max(axis=2), 0.0, 2.0,
+                             norm_mode="objects", frames=frames, bg_radius=5, norm_target=0.5)
+    vmin, _ = limits["green"]
+    assert vmin < np.median(frames)                       # background survives the clip
+    ch = _OneChannelLayout().split(frames)[0]
+    ch.vmin, ch.vmax = limits["green"]
+    out = RGBMovie.from_channels([ch], {}, bg_radius=5).to_array()[:, :, 1, :]
+    assert np.median(out[61, 61, :]) == pytest.approx(0.5, abs=0.08)

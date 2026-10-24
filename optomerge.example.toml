@@ -100,6 +100,8 @@ bg_radius = 10                         # background-subtraction structuring-elem
 bunch_size = 100                       # frames held/processed per block (caps memory; ~100 like MATLAB)
 norm_projection = "max"                # projection for normalisation limits: max (avoids saturating moving filaments) | mean
 norm_exclude = 0.0                     # extra percentile excluded when setting limits (0 = min/max after median-despeckle)
+norm_mode = "objects"                  # vmax: objects (typical object peak at norm_target of full scale; bright blobs saturate) | range (projection max + norm_cap)
+norm_target = 0.5                      # objects mode: display level of the typical object peak (0.5 -> >2x typical saturates)
 norm_cap = 2.0                         # cap vmax at vmin + norm_cap*(p99.9 - vmin): one bright outlier can't dim a channel (0 = off)
 crop = "footprint"                     # output crop: footprint (where all channels have data) | signal (legacy: where signal exceeds 0.01)
 precision = "single"                   # merge working/output precision: single (float32, halves merge memory) | double (float64)

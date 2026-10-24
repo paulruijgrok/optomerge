@@ -89,11 +89,21 @@ class Channel:
             self.vmax = float(self.data.max())
         return self
 
-    def normalized(self) -> np.ndarray:
-        """Return pixels scaled to [0, 1] using stored vmin/vmax."""
+    def normalized(self, clip_high: bool = True) -> np.ndarray:
+        """Return pixels scaled so vmin -> 0 and vmax -> 1.
+
+        Values below vmin are clipped to 0. ``clip_high=False`` keeps values
+        above vmax (> 1): the merge uses it so background subtraction sees the
+        real object heights, and only the writer clips to the display range.
+        """
         if self.vmin is None or self.vmax is None:
             self.calibrate()
-        return norm_image(self.data, self.vmin, self.vmax)
+        if clip_high:
+            return norm_image(self.data, self.vmin, self.vmax)
+        if self.vmax == self.vmin:
+            return np.zeros_like(np.asarray(self.data, dtype=np.float64))
+        return np.maximum((np.asarray(self.data, dtype=np.float64) - self.vmin)
+                          / (self.vmax - self.vmin), 0.0)
 
     def subtract_background(self, radius: int = 10) -> "Channel":
         """Return a *new* Channel with morphological background subtracted.

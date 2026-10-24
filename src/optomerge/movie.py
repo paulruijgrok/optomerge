@@ -247,7 +247,10 @@ class RGBMovie(Movie):
         moving = [c for c in channels if not c.reference]
 
         # Reference: normalise then background-subtract (in the working dtype).
-        ref_arr = subtract_background(reference.normalized().astype(work, copy=False),
+        # Normalise without the upper clip: a vmax below object peaks (the
+        # "objects" normalisation) must not flatten objects sitting on a raised
+        # background before it is subtracted. Saving clips to the display range.
+        ref_arr = subtract_background(reference.normalized(clip_high=False).astype(work, copy=False),
                                       radius=bg_radius)
 
         prepared: List[tuple] = []  # (color, array) for each moving channel
@@ -255,7 +258,7 @@ class RGBMovie(Movie):
 
         if len(moving) == 1:
             mov = moving[0]
-            mov_arr = mov.normalized().astype(work, copy=False)
+            mov_arr = mov.normalized(clip_high=False).astype(work, copy=False)
             # Zero-pad the moving/reference pair exactly as the original code.
             mov_arr, ref_arr = zero_pad_images(mov_arr, ref_arr)
             mov_arr = transforms[mov.name].apply(mov_arr)
@@ -264,7 +267,8 @@ class RGBMovie(Movie):
             masks_for_crop = [ref_arr, mov_arr]
         elif len(moving) > 1:
             # Generalised path: pad all channels to a common power-of-2 size.
-            arrays = [ref_arr] + [m.normalized().astype(work, copy=False) for m in moving]
+            arrays = [ref_arr] + [m.normalized(clip_high=False).astype(work, copy=False)
+                                  for m in moving]
             arrays = _zero_pad_many(arrays)
             ref_arr = arrays[0]
             for mov, marr in zip(moving, arrays[1:]):
