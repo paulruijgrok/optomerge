@@ -183,7 +183,8 @@ class RGBMovie(Movie):
     Parameters
     ----------
     data : np.ndarray, shape (H, W, 3, N)
-        Float RGB movie in [0, 1].
+        Float RGB movie; 0..1 is the display range. Values above 1 (objects
+        brighter than ``vmax``) are kept here and clipped by the writer.
     crop_range : tuple of int, optional
         ``(rowbeg, rowend, colbeg, colend)`` shared across bunches.
     """
