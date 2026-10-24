@@ -160,6 +160,17 @@ class ProcessingSettings:
     #: 0 = plain min/max after median-despeckle (keeps sparse features like heads);
     #: raise only if a channel still has outliers the median missed.
     norm_exclude: float = 0.0
+    #: Outlier ceiling on each channel's vmax: at most vmin + norm_cap * (p99.9 -
+    #: vmin) of the despeckled projection, so one bright aggregate can't dim the
+    #: whole channel. Only bites on outliers (normal movies sit at 1.2-1.6x);
+    #: sparse heads stay unclipped. Logged when applied. 0 = off (plain max).
+    #: Catches outliers covering < 0.1% of the channel (~100 px on a 230x480 crop).
+    norm_cap: float = 2.0
+    #: Output crop: "footprint" (default; where the reference and the warped
+    #: moving channel both have data -- geometry only) or "signal" (legacy
+    #: MATLAB rule: where every channel's time-mean exceeds 0.01, which crops
+    #: sparse movies down to the region their objects happen to visit).
+    crop: str = "footprint"
     #: Merge working/output precision: "single" (float32, default -- halves the
     #: merge's multi-GB intermediates + RGB buffer, negligible vs float64 since
     #: cv2 computes in float32 and output is 8-/16-bit) or "double" (float64,
@@ -420,19 +431,21 @@ class Settings:
         c = self.calibration
         norm_from_max = self.processing.norm_projection == "max"
         norm_exclude = self.processing.norm_exclude
+        norm_cap = self.processing.norm_cap
         if c.mode == "robust":
             return RobustCalibrator(
                 layout=layout, aligner=aligner, criteria=criteria,
                 chunk_size=c.chunk_size, min_candidates=c.min_candidates,
                 max_trials=c.max_trials, verbose=self.runtime.verbose,
                 norm_from_max=norm_from_max, norm_exclude=norm_exclude,
+                norm_cap=norm_cap,
             )
         return SingleProjectionCalibrator(
             layout=layout, aligner=aligner,
             projection_frames=self.channels.projection_frames,
             criteria=criteria, verbose=self.runtime.verbose,
             norm_from_max=norm_from_max, norm_exclude=norm_exclude,
-            feature_frames=self.alignment.feature_frames,
+            norm_cap=norm_cap, feature_frames=self.alignment.feature_frames,
         )
 
     def to_pipeline_kwargs(self) -> Dict[str, Any]:
@@ -447,6 +460,7 @@ class Settings:
             "bg_radius": self.processing.bg_radius,
             "projection_frames": self.channels.projection_frames,
             "verbose": self.runtime.verbose,
+            "crop": self.processing.crop,
         }
 
     def as_dict(self) -> Dict[str, Any]:

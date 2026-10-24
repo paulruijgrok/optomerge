@@ -43,7 +43,8 @@ class _Chan:
         self.value = value
         self.vmin = None
         self.vmax = None
-        self.data = np.zeros((8, 8))  # equal even crops: canvas conversion is a no-op
+        # Equal even crops (canvas conversion is a no-op), consistent with vmax.
+        self.data = np.full((8, 8), float(value))
 
     def calibrate(self, exclude_fraction=0.0):
         # Limits derive from the movie data, so conserved reuse can be shown to

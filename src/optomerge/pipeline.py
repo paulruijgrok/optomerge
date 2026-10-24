@@ -52,6 +52,10 @@ class MergePipeline:
     criteria : AcceptanceCriteria, optional
         Acceptance thresholds; recorded on the resulting calibration (and, for
         the default single-projection calibrator, used to flag a rejected fit).
+    crop : str
+        Output crop rule: "footprint" (default; where all channels have data
+        after warping) or "signal" (legacy: where every channel's time-mean
+        exceeds a threshold). See :meth:`RGBMovie.from_channels`.
     """
 
     def __init__(
@@ -67,6 +71,7 @@ class MergePipeline:
         criteria: Optional[AcceptanceCriteria] = None,
         rgb_bitdepth: int = 8,
         precision: str = "single",
+        crop: str = "footprint",
     ) -> None:
         self.source = Path(source)
         self.layout = layout or ChannelLayout.auto()
@@ -77,6 +82,7 @@ class MergePipeline:
         self.verbose = verbose
         self.criteria = criteria
         self.rgb_bitdepth = rgb_bitdepth
+        self.crop = crop
         # Working/output precision for the merge: "single" (float32, default,
         # halves the merge's memory) or "double" (float64, bit-for-bit fidelity).
         self.merge_dtype = np.float32 if precision == "single" else np.float64
@@ -170,6 +176,7 @@ class MergePipeline:
                 blue_led_frames=led_slice,
                 pixel_size=movie.pixel_size,
                 dtype=self.merge_dtype,
+                crop=self.crop,
             )
             crop_range = rgb.crop_range  # lock crop range after the first bunch
             rgb_blocks.append(rgb.to_array())

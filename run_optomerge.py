@@ -196,8 +196,10 @@ def process_file(
     shared: "Calibration | None" = None,
     norm_from_max: bool = True,
     norm_exclude: float = 0.0,
+    norm_cap: float = 2.0,
     rgb_bitdepth: int = 8,
     precision: str = "single",
+    crop: str = "footprint",
 ) -> dict:
     """Calibrate, gate on acceptance, then merge one file.
 
@@ -216,11 +218,13 @@ def process_file(
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)
         active = (ConservedCalibrator(shared, projection_frames=projection_frames,
-                                      norm_from_max=norm_from_max, norm_exclude=norm_exclude)
+                                      norm_from_max=norm_from_max, norm_exclude=norm_exclude,
+                                      norm_cap=norm_cap)
                   if shared is not None else calibrator)
         pipe = MergePipeline(source=src, calibrator=active, bunch_size=bunch_size,
                              bg_radius=bg_radius, projection_frames=projection_frames,
-                             verbose=verbose, rgb_bitdepth=rgb_bitdepth, precision=precision)
+                             verbose=verbose, rgb_bitdepth=rgb_bitdepth, precision=precision,
+                             crop=crop)
 
         movie = RawMovie.open(src)
         try:
@@ -235,6 +239,8 @@ def process_file(
         cal = pipe.calibration
         result["calibration"] = cal
         result["score"] = cal.score if cal is not None else float("nan")
+        for note in (cal.notes if cal is not None else []):
+            logger.warning(f"  [QC] {note}")
 
         # Gate freshly-fitted (non-conserved) movies on acceptance.
         if shared is None and cal is not None and not cal.accepted:
@@ -308,8 +314,10 @@ def _build_pf_kwargs(settings, calibrator, logger) -> dict:
         verbose=settings.runtime.verbose, logger=logger,
         norm_from_max=settings.processing.norm_projection == "max",
         norm_exclude=settings.processing.norm_exclude,
+        norm_cap=settings.processing.norm_cap,
         rgb_bitdepth=settings.io.rgb_bitdepth,
         precision=settings.processing.precision,
+        crop=settings.processing.crop,
     )
 
 

@@ -51,6 +51,8 @@ class Calibration:
     accepted: bool = True
     reasons: List[str] = field(default_factory=list)
     image_shape: Optional[tuple] = None
+    #: QC notes that don't reject the movie (e.g. an outlier-capped vmax).
+    notes: List[str] = field(default_factory=list)
 
 
 def _despeckle(image: np.ndarray, size: int = 3) -> np.ndarray:
@@ -71,17 +73,34 @@ def _compute_limits(
     resolved_layout: ChannelLayout,
     limit_source: np.ndarray,
     norm_exclude: float,
+    norm_cap: float = 0.0,
+    notes: Optional[List[str]] = None,
 ) -> Dict[str, Tuple[float, float]]:
     """Per-channel (vmin, vmax) intensity limits from a projection.
 
     The projection is median-filtered first (removes cosmic rays without
     clipping sparse real features), then ``vmin``/``vmax`` are the min/max --
     or, if ``norm_exclude > 0``, the corresponding percentiles.
+
+    With ``norm_cap > 0``, ``vmax`` is capped at ``vmin + norm_cap * (p99.9 -
+    vmin)``: a bright aggregate far above the channel's real signal would
+    otherwise dim the whole channel. Each cap is described in ``notes``.
     """
     despeckled = _despeckle(limit_source)
-    chans = {c.name: c.calibrate(exclude_fraction=norm_exclude)
-             for c in resolved_layout.split(despeckled)}
-    return {name: (c.vmin, c.vmax) for name, c in chans.items()}
+    limits = {}
+    for c in resolved_layout.split(despeckled):
+        c.calibrate(exclude_fraction=norm_exclude)
+        vmin, vmax = c.vmin, c.vmax
+        if norm_cap > 0:
+            cap = vmin + norm_cap * (float(np.percentile(c.data, 99.9)) - vmin)
+            if vmax > cap:
+                if notes is not None:
+                    ratio = norm_cap * (vmax - vmin) / (cap - vmin)
+                    notes.append(f"{c.name}: vmax capped {vmax:.0f} -> {cap:.0f} "
+                                 f"(outlier at {ratio:.1f}x the p99.9 level)")
+                vmax = cap
+        limits[c.name] = (vmin, vmax)
+    return limits
 
 
 def _to_padded_frame(
@@ -143,6 +162,7 @@ def _build_calibration(
     norm_from_max: bool = True,
     norm_exclude: float = 0.0,
     frame_stack: Optional[np.ndarray] = None,
+    norm_cap: float = 0.0,
 ) -> Calibration:
     """Fit transforms and package a :class:`Calibration`.
 
@@ -159,7 +179,8 @@ def _build_calibration(
     stacks rather than the mean projection (see :class:`FeatureDistanceAligner`).
     """
     limit_source = max_proj if norm_from_max else mean_proj
-    limits = _compute_limits(resolved_layout, limit_source, norm_exclude)
+    notes: List[str] = []
+    limits = _compute_limits(resolved_layout, limit_source, norm_exclude, norm_cap, notes)
 
     if getattr(aligner, "needs_frames", False) and frame_stack is not None:
         # Per-frame aligner: hand it raw channel stacks (it reads .data directly).
@@ -185,6 +206,7 @@ def _build_calibration(
         accepted=result.passed if gate else True,
         reasons=result.reasons if gate else [],
         image_shape=tuple(mean_proj.shape),
+        notes=notes,
     )
 
 
@@ -242,6 +264,7 @@ class SingleProjectionCalibrator(Calibrator):
         norm_from_max: bool = True,
         norm_exclude: float = 0.0,
         feature_frames: int = 40,
+        norm_cap: float = 2.0,
     ) -> None:
         self.layout = layout or ChannelLayout.auto()
         self.aligner = aligner or PhaseCorrelationAligner()
@@ -251,6 +274,7 @@ class SingleProjectionCalibrator(Calibrator):
         self.norm_from_max = norm_from_max
         self.norm_exclude = norm_exclude
         self.feature_frames = feature_frames
+        self.norm_cap = norm_cap
 
     def calibrate(self, movie: "RawMovie") -> Calibration:
         max_proj = movie.max_projection(self.projection_frames)
@@ -264,7 +288,7 @@ class SingleProjectionCalibrator(Calibrator):
                                   self.criteria, gate=self.criteria is not None,
                                   norm_from_max=self.norm_from_max,
                                   norm_exclude=self.norm_exclude,
-                                  frame_stack=frame_stack)
+                                  frame_stack=frame_stack, norm_cap=self.norm_cap)
 
 
 class ConservedCalibrator(Calibrator):
@@ -277,17 +301,20 @@ class ConservedCalibrator(Calibrator):
     """
 
     def __init__(self, reference: Calibration, projection_frames: Optional[int] = None,
-                 norm_from_max: bool = True, norm_exclude: float = 0.0) -> None:
+                 norm_from_max: bool = True, norm_exclude: float = 0.0,
+                 norm_cap: float = 2.0) -> None:
         self.reference = reference
         self.projection_frames = projection_frames
         self.norm_from_max = norm_from_max
         self.norm_exclude = norm_exclude
+        self.norm_cap = norm_cap
 
     def calibrate(self, movie: "RawMovie") -> Calibration:
         layout = self.reference.resolved_layout
         limit_source = (movie.max_projection(self.projection_frames) if self.norm_from_max
                         else movie.mean_projection(self.projection_frames))
-        limits = _compute_limits(layout, limit_source, self.norm_exclude)
+        notes: List[str] = []
+        limits = _compute_limits(layout, limit_source, self.norm_exclude, self.norm_cap, notes)
         return Calibration(
             resolved_layout=layout,
             transforms=dict(self.reference.transforms),
@@ -296,6 +323,7 @@ class ConservedCalibrator(Calibrator):
             accepted=True,
             reasons=[],
             image_shape=tuple(limit_source.shape),
+            notes=notes,
         )
 
 
@@ -333,6 +361,7 @@ class RobustCalibrator(Calibrator):
         verbose: bool = False,
         norm_from_max: bool = True,
         norm_exclude: float = 0.0,
+        norm_cap: float = 2.0,
     ) -> None:
         self.layout = layout or ChannelLayout.auto()
         self.aligner = aligner or PhaseCorrelationAligner()
@@ -343,6 +372,7 @@ class RobustCalibrator(Calibrator):
         self.verbose = verbose
         self.norm_from_max = norm_from_max
         self.norm_exclude = norm_exclude
+        self.norm_cap = norm_cap
 
     def _log(self, msg: str) -> None:
         if self.verbose:
@@ -359,6 +389,7 @@ class RobustCalibrator(Calibrator):
                 self.layout, self.aligner, projection_frames=None,
                 criteria=self.criteria, verbose=self.verbose,
                 norm_from_max=self.norm_from_max, norm_exclude=self.norm_exclude,
+                norm_cap=self.norm_cap,
             ).calibrate(movie)
             if not single.accepted:
                 raise AlignmentNotFoundError(
@@ -382,7 +413,8 @@ class RobustCalibrator(Calibrator):
                 cal = _build_calibration(resolved, max_proj, mean_proj, self.aligner,
                                          self.criteria, gate=True,
                                          norm_from_max=self.norm_from_max,
-                                         norm_exclude=self.norm_exclude)
+                                         norm_exclude=self.norm_exclude,
+                                         norm_cap=self.norm_cap)
             except Exception as exc:  # a bad block shouldn't sink the movie
                 self._log(f"  block @{bunch.start_index}: skipped ({exc})")
                 continue  # counts as a trial (guards against an all-bad movie)

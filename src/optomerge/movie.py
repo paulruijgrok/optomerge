@@ -213,6 +213,7 @@ class RGBMovie(Movie):
         blue_led_frames: Optional[np.ndarray] = None,
         pixel_size: Optional[float] = None,
         dtype: np.dtype = np.float32,
+        crop: str = "footprint",
     ) -> "RGBMovie":
         """Assemble an output movie from aligned channels.
 
@@ -231,7 +232,16 @@ class RGBMovie(Movie):
         negligible change vs float64 (cv2 already computes in float32 internally,
         and the output is 8-/16-bit); pass ``float64`` for bit-for-bit fidelity
         with the reference. The kernels preserve this dtype end to end.
+
+        ``crop`` picks the output crop (computed once, then locked via
+        ``crop_range``). "footprint" keeps the bounding box where the reference
+        and every warped moving channel have data -- pure geometry, so a sparse
+        field keeps its empty margins. "signal" is the original rule: where every
+        channel's background-subtracted time-mean exceeds ``threshold``, which
+        shrinks sparse movies to the region their objects happen to visit.
         """
+        if crop not in ("footprint", "signal"):
+            raise ValueError(f"crop must be 'footprint' or 'signal', got {crop!r}.")
         work = np.dtype(dtype)
         reference = next((c for c in channels if c.reference), channels[0])
         moving = [c for c in channels if not c.reference]
@@ -264,7 +274,9 @@ class RGBMovie(Movie):
             masks_for_crop = [ref_arr] + [a for _, a in prepared]
 
         # -- crop range (shared across bunches) --
-        if crop_range is None:
+        if crop_range is None and crop == "footprint":
+            crop_range = _footprint_crop(reference, moving, transforms)
+        if crop_range is None:  # "signal", or a degenerate footprint
             crop_range = _intersect_crop(masks_for_crop, threshold)
         rb, re, cb, ce = crop_range
 
@@ -303,6 +315,43 @@ def _intersect_crop(arrays: List[np.ndarray], threshold: float) -> tuple:
     colbeg = int(np.argmax(cropcols))
     colend = int(len(cropcols) - 1 - np.argmax(cropcols[::-1]))
     return rowbeg, rowend, colbeg, colend
+
+
+def _valid_area(ch: "Channel") -> np.ndarray:
+    """(h, w) float mask of a channel crop's real pixels (1) vs scrubbed ones (0)."""
+    shape = ch.data.shape[:2]
+    if ch.mask is None or ch.bounds is None:
+        return np.ones(shape)
+    (r0, r1), (c0, c1) = np.asarray(ch.bounds)
+    valid = ~np.asarray(ch.mask, dtype=bool)[r0:r1 + 1, c0:c1 + 1]
+    return valid.astype(np.float64) if valid.shape == shape else np.ones(shape)
+
+
+def _footprint_crop(reference: "Channel", moving: "List[Channel]",
+                    transforms: "Dict[str, Transform]") -> Optional[tuple]:
+    """Bounding box where the reference and every warped moving channel have data.
+
+    Pads the channels' valid-pixel masks exactly as the merge pads their data and
+    warps each moving mask with its transform (fully-covered pixels only), so the
+    box depends on geometry alone, not on what the field happens to contain.
+    Returns ``None`` if the overlap is empty.
+    """
+    areas = [_valid_area(reference)] + [_valid_area(m) for m in moving]
+    if not moving:  # single channel: the merge doesn't pad it
+        padded = areas
+    elif len(moving) == 1:
+        mov_a, ref_a = zero_pad_images(areas[1], areas[0])
+        padded = [ref_a, mov_a]
+    else:
+        padded = [a[:, :, 0] for a in _zero_pad_many([a[:, :, None] for a in areas])]
+    both = padded[0] > 0.5
+    for m, area in zip(moving, padded[1:]):
+        t = transforms.get(m.name)
+        both &= (t.apply(area) if t is not None else area) > 0.999
+    rows, cols = np.flatnonzero(both.any(axis=1)), np.flatnonzero(both.any(axis=0))
+    if rows.size == 0:
+        return None
+    return int(rows[0]), int(rows[-1]), int(cols[0]), int(cols[-1])
 
 
 def _zero_pad_many(arrays: List[np.ndarray]) -> List[np.ndarray]:
