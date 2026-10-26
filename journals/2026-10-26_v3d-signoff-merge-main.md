@@ -1,4 +1,4 @@
-# 2026-10-26 — v3d sign-off, merge to main
+# 2026-10-26 — v3d sign-off, merge to main; blue-LED perturbation marking
 
 Notion mirror: *2026/10/26 v3d sign-off, merge to main* under the Optomerge log
 hub. Session on Sherlock (`sh03-ln08`, tests in a `possu` job), branch
@@ -52,15 +52,74 @@ git push origin main feature/sherlock
 |---|---|
 | `36310d5` | `docs/general_registration.md`: July ECC/MI sweep superseded; pilot accuracy comparison |
 | `92b4ffe..36310d5` | `main` fast-forwarded to `feature/sherlock` |
-| (this commit) | `journals/2026-10-26_v3d-signoff-merge-main.md` |
+| `eb6f2ae` | `journals/2026-10-26_v3d-signoff-merge-main.md` (part 1) |
+| `5fc5442` | `src/optomerge/events.py` (new), `config.py` (`[events]`), `movie.py`, `pipeline.py`, `__init__.py`, `run_optomerge.py` (`--events`), README, `optomerge.example.toml`, `tests/test_events.py` |
+| `f8b408f` | `.gitignore`: `old_code/` |
+| (this commit) | this journal (part 2) |
+
+## Part 2: blue-LED perturbation marking (`5fc5442`, `f8b408f`)
+
+P. asked for the output's blue plane to show when the external perturbation
+(blue LED) was on, as the old MATLAB pipeline did (`getBlueLEDtimings` in
+`alignRGB.m`, placed locally in `old_code/`). It should be optional for general
+users but work for this data.
+
+### Format (checked on all 55 timing CSVs in the pilot data)
+- `<stem>.csv`: one acquisition timestamp (ms) per frame, 800 lines.
+- `<stem> led.csv`: row 1 has the switch times; row 2 has the drive voltages
+  (`0.000,1.100`, as P. confirmed).
+  - MATLAB marks frames in `(on, off]` pairs from row 1 and ignores row 2.
+  - P. confirmed that reading is correct.
+- Every pilot file has the same protocol: one pulse, frames 100–299 (0-based)
+  of 800.
+- `20180620/ch08 … 05 led.csv` has no frame-timing CSV.
+- The old composites have blue = 128 on exactly those frames and 0 elsewhere.
+
+### Implementation
+- **`src/optomerge/events.py`:**
+  - Each setup-specific format is a named source behind `load_event_frames()`.
+    The first one is `led_csv`.
+  - No files → unmarked, with no warning.
+  - Anything else goes to a `[QC]` warning and never fails the movie: one file
+    missing, unreadable, an odd number of switches, or a timestamp/frame count
+    mismatch.
+  - MATLAB's "copy the previous movie's pattern" fallback is not ported. It
+    depends on file order, and a misspelt variable meant it never took effect.
+- **Config:** new `[events]` section with `source` (default `"none"`) and
+  `blue_level` (default 0.5). The CLI flag is `--events`.
+  - `RGBMovie.from_channels` and `MergePipeline.merge` take `blue_level`.
+  - The blue fill is vectorised.
+- README section and `optomerge.example.toml` updated.
+- `old_code/` is gitignored at P.'s request (not part of the repo).
+- `hpc/runs/MyLOV1Char/base.toml` now sets `[events] source = "led_csv"`, so the
+  full reprocessing run marks the perturbation.
+
+### Verification
+- Full suite (job 49667441): 177 passed, 1 skipped (8 new tests in
+  `tests/test_events.py`).
+- Real data (job 49667857): the 4 movies of 20181002/ch11 with
+  `--events led_csv`, output in
+  `$SCRATCH/optomerge_runs/MyLOV1Char/aligned_blue_test/`.
+  - Blue is on for frames 100–299, uniform, and matches the old composites frame
+    for frame.
+- **Level:** blue is 127, not 128, because the 8-bit writer floors
+  (`(x*255).astype(uint8)`). P. accepted 127, so the writer stays as it is.
+
+```bash
+srun -p possu -c 8 --mem=32G -t 00:30:00 bash -c "source hpc/env.sh; \
+  python run_optomerge.py --config hpc/runs/MyLOV1Char/base.toml hpc/runs/MyLOV1Char/20181002.toml \
+  --input $IN/20181002/ch11 --output $SCRATCH/optomerge_runs/MyLOV1Char/aligned_blue_test \
+  --events led_csv --workers 3 --overwrite"
+```
+
+Merged `feature/blue-led` → `main` (fast-forward) and pushed both branches.
 
 ## Open items / next steps
 
 - **P. is uploading more of the dataset.** Once the algorithm is final, reprocess
   everything in one batch run (SLURM, `--num-shards`/`--workers`). Size the job
   with a small representative test first.
-- Clone `~/code/optomerge-objnorm` can be deleted. It's fully merged with no local
-  changes; the agent's `rm` was denied, so P. will delete it by hand.
+- ~~Delete the clone `~/code/optomerge-objnorm`~~ (done: P. removed it).
 - **`reuse_alignment = "first"`:** store the transform in a crop-independent
   (raw-frame) form.
 - Range mode only: the `vmax` cap misses outliers larger than 0.1% of the channel.

@@ -13,3 +13,6 @@ fit_rotation = true
 
 [runtime]
 reuse_alignment = "none"
+
+[events]
+source = "led_csv"    # blue plane marks the blue-LED perturbation ("<stem>.csv" + "<stem> led.csv")
