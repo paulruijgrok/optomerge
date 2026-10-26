@@ -98,8 +98,10 @@ applies to the moving channel — the same sign/axis convention as the `phase` a
 `feature` aligners. The round-trip is verified to ~1e-14 in
 `tests/test_general_registration.py`.
 
-Library calls that fail to converge (no texture, too few matches, mismatched
-shapes) return an identity `Transform` with `score = 0` rather than raising, so one
+Unequal crops are handled by the calibration (`fit_in_canvas`): aligners that
+need equal shapes (ECC, MI) fit on a common trimmed region, and every fit is
+converted to the merge canvas. Library calls that fail to converge (no texture,
+too few matches) return an identity `Transform` with `score = 0` rather than raising, so one
 hard channel pair cannot sink a batch run.
 
 ## Failure modes
@@ -129,6 +131,29 @@ methods produce *plausible* transforms, not which is most accurate. Overlays
 still need a visual check, and the feature aligner (the tailored method for
 heads-on-filaments data) was not part of this sweep. Logs: `output_{phase,ecc,mi}/run_log.txt`
 (not committed).
+
+**Superseded.** This sweep predates two fixes from 2026-10-24. Until then, ECC
+and MI silently returned identity whenever the red and green crops differed in
+size; they now trim both crops to a common region (`fit_in_canvas`). MI's coarse
+translation search also had its sign reversed (`bd722ff`). Treat the `ecc` and
+`mi` rows above as historical.
+
+## Accuracy comparison on the MyLOV1Char pilot (2026-10-24)
+
+The 27 pilot movies, after both fixes. Offsets are the residual red offset
+measured in the written output (R heads fitted onto G filament centrelines), and
+separately against the lab's old `* RGB.tif` composites
+(`hpc/runs/MyLOV1Char/compare_aligners.sbatch`, `diagnose_alignment.py`):
+
+| method | median offset | max | movies > 1 px | vs old composites (median) |
+|---|---|---|---|---|
+| `feature` | 0.24 px | 0.49 px | 0/27 | 0.57 px |
+| `ecc` | 1.10 px | 4.38 px | 16/26 (1 rejected: rot 2.19°) | 1.70 px |
+| `mi` | 1.59 px | 11.3 px | 18/27 | 1.70 px |
+
+For sparse heads-on-filaments data, `feature` is clearly the right method. The
+two channels image different structures here, which is the hard case for ECC and
+MI. They remain candidates for OptoSplit data where both channels share structure.
 
 ## Roadmap / future work
 
