@@ -142,6 +142,7 @@ class MergePipeline:
         movie: RawMovie,
         output: Optional[str | Path] = None,
         blue_led_frames: Optional[np.ndarray] = None,
+        blue_level: float = 0.5,
     ) -> RGBMovie:
         """Assemble the aligned RGB movie using the current calibration.
 
@@ -174,6 +175,7 @@ class MergePipeline:
                 crop_range=crop_range,
                 bg_radius=self.bg_radius,
                 blue_led_frames=led_slice,
+                blue_level=blue_level,
                 pixel_size=movie.pixel_size,
                 dtype=self.merge_dtype,
                 crop=self.crop,

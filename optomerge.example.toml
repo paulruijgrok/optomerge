@@ -106,6 +106,10 @@ norm_cap = 2.0                         # cap vmax at vmin + norm_cap*(p99.9 - vm
 crop = "footprint"                     # output crop: footprint (where all channels have data) | signal (legacy: where signal exceeds 0.01)
 precision = "single"                   # merge working/output precision: single (float32, halves merge memory) | double (float64)
 
+[events]
+source = "none"                       # mark perturbed frames in the blue plane: none | led_csv (<stem>.csv frame times + "<stem> led.csv" LED switches)
+blue_level = 0.5                      # blue level on marked frames (0.5 = half scale, 127 in 8-bit, as in the MATLAB pipeline)
+
 [runtime]
 reuse_alignment = "none"               # none | first | <reference file>: reuse layout+transform across the batch
 verbose = false

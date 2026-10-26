@@ -272,6 +272,28 @@ input. See [docs/general_registration.md](docs/general_registration.md) for the
 method-by-method guide, parameters, and failure modes. Method auto-selection is a
 planned follow-up.
 
+### Marking perturbed frames in the blue plane (optional)
+
+The output uses red and green; blue is empty by default. If your experiment
+switches an external perturbation (e.g. a blue LED) on and off during
+acquisition, `--events <format>` (or `[events] source`) fills the blue plane of
+each frame recorded while it was on. You can then see the perturbation at a
+glance in the movie, at `[events] blue_level` (default 0.5 = half scale).
+
+Timing files are setup-specific, so each format is a named source in
+`src/optomerge/events.py`. There is currently one:
+
+- `led_csv` reads two files next to `<stem>.tif`, the format of the original MATLAB
+  pipeline. `<stem>.csv` has one frame timestamp per line. `<stem> led.csv`
+  has LED switch times in on/off pairs on its first row. A frame is marked when
+  its timestamp lies in `(on, off]`.
+- Movies without these files are left unmarked.
+- Incomplete or mismatched files are logged as `[QC]` warnings.
+
+```bash
+python run_optomerge.py --config my_run.toml --events led_csv
+```
+
 ### Configuration & run provenance
 
 Run parameters resolve in three layers, each overriding the previous: built-in

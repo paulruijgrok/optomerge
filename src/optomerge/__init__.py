@@ -53,6 +53,7 @@ from .calibration import (
 )
 from .grouping import group_movies, select_shard, available_modes as grouping_modes
 from .pipeline import MergePipeline
+from .events import EVENT_SOURCES, load_event_frames
 from .config import Settings
 from ._kernels._parallel import available_cpus, get_default_workers, set_default_workers
 
@@ -70,6 +71,7 @@ __all__ = [
     "ConservedCalibrator", "AlignmentNotFoundError",
     "group_movies", "select_shard", "grouping_modes",
     "MergePipeline",
+    "EVENT_SOURCES", "load_event_frames",
     "Settings",
     "set_default_workers", "get_default_workers", "available_cpus",
 ]

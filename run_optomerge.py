@@ -54,6 +54,11 @@ Options
                     run (whole batch), token (filename marker), or folder.
     --group-token REGEX
                     Filename marker regex for --group-by token (e.g. "_ch\\d\\d_").
+    --events none|led_csv
+                    Mark frames recorded during an external perturbation with a
+                    uniform blue plane (default: none). led_csv reads
+                    "<stem>.csv" frame times + "<stem> led.csv" LED switches
+                    next to each movie (the MATLAB pipeline's format).
     --verbose       Print per-stage progress inside each file
     --dry-run       List files that would be processed, then exit
 
@@ -87,6 +92,7 @@ _here = Path(__file__).resolve().parent
 
 try:
     from optomerge import (
+        EVENT_SOURCES,
         AlignmentNotFoundError,
         Calibration,
         ConservedCalibrator,
@@ -94,6 +100,7 @@ try:
         RawMovie,
         Settings,
         available_cpus,
+        load_event_frames,
         group_movies,
         select_shard,
     )
@@ -140,6 +147,7 @@ _CLI_TO_FIELD = {
     "reuse_alignment": "reuse_alignment", "verbose": "verbose", "dry_run": "dry_run",
     "workers": "workers", "exclude": "exclude",
     "num_shards": "num_shards", "shard_index": "shard_index",
+    "events": "source",
 }
 
 
@@ -202,6 +210,8 @@ def process_file(
     rgb_bitdepth: int = 8,
     precision: str = "single",
     crop: str = "footprint",
+    events: str = "none",
+    blue_level: float = 0.5,
 ) -> dict:
     """Calibrate, gate on acceptance, then merge one file.
 
@@ -254,7 +264,13 @@ def process_file(
             result["duration"] = time.perf_counter() - t0
             return result
 
-        rgb = pipe.merge(movie, output=dst)
+        blue, event_notes = load_event_frames(events, src, len(movie))
+        for note in event_notes:
+            logger.warning(f"  [QC] {note}")
+        if blue is not None:
+            result["blue_frames"] = int(blue.sum())
+            logger.info(f"  blue LED: {result['blue_frames']}/{len(blue)} frames marked")
+        rgb = pipe.merge(movie, output=dst, blue_led_frames=blue, blue_level=blue_level)
         result["shape"] = tuple(rgb.to_array().shape)
         result["transforms"] = {
             name: {
@@ -323,6 +339,8 @@ def _build_pf_kwargs(settings, calibrator, logger) -> dict:
         rgb_bitdepth=settings.io.rgb_bitdepth,
         precision=settings.processing.precision,
         crop=settings.processing.crop,
+        events=settings.events.source,
+        blue_level=settings.events.blue_level,
     )
 
 
@@ -488,6 +506,9 @@ def main() -> None:
     parser.add_argument("--shard-index", type=int, default=S, metavar="I", dest="shard_index",
                         help="process only part I (0-based) of --num-shards N. Whole "
                              "alignment sets stay together with --reuse-alignment first.")
+    parser.add_argument("--events", default=S, choices=EVENT_SOURCES,
+                        help="mark perturbed frames in the blue plane: none (default) | "
+                             "led_csv (<stem>.csv frame times + '<stem> led.csv')")
     parser.add_argument("--verbose", action="store_true", default=S)
     parser.add_argument("--dry-run", action="store_true", default=S, dest="dry_run")
     args = parser.parse_args()
@@ -500,6 +521,9 @@ def main() -> None:
     overrides = {_CLI_TO_FIELD[dest]: val for dest, val in vars(args).items()
                  if dest in _CLI_TO_FIELD}
     settings = settings.with_overrides(**overrides)
+    if settings.events.source not in EVENT_SOURCES:
+        sys.exit(f"ERROR: [events] source must be one of {EVENT_SOURCES}, "
+                 f"got {settings.events.source!r}")
 
     src_root = (_here / settings.io.input).resolve()
     dst_root = (_here / settings.io.output).resolve()

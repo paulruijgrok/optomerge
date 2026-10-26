@@ -255,6 +255,18 @@ class RuntimeSettings:
     shard_index: int = 0
 
 
+@dataclass
+class EventsSettings:
+    """Optional marking of perturbed frames in the output's blue plane."""
+    #: Where per-frame event timings come from: "none" (default, blue plane
+    #: empty) or a data-specific format from :mod:`optomerge.events`, e.g.
+    #: "led_csv" (``<stem>.csv`` frame times + ``<stem> led.csv`` LED switches).
+    source: str = "none"
+    #: Blue level (0..1 of full scale) painted on marked frames; 0.5 is half
+    #: scale (127 in 8-bit), as in the MATLAB pipeline.
+    blue_level: float = 0.5
+
+
 _SECTIONS = {
     "io": IOSettings,
     "channels": ChannelSettings,
@@ -263,6 +275,7 @@ _SECTIONS = {
     "acceptance": AcceptanceSettings,
     "grouping": GroupingSettings,
     "processing": ProcessingSettings,
+    "events": EventsSettings,
     "runtime": RuntimeSettings,
 }
 
@@ -276,6 +289,7 @@ class Settings:
     acceptance: AcceptanceSettings = field(default_factory=AcceptanceSettings)
     grouping: GroupingSettings = field(default_factory=GroupingSettings)
     processing: ProcessingSettings = field(default_factory=ProcessingSettings)
+    events: EventsSettings = field(default_factory=EventsSettings)
     runtime: RuntimeSettings = field(default_factory=RuntimeSettings)
 
     # ------------------------------------------------------------------ #

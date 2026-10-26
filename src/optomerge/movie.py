@@ -212,6 +212,7 @@ class RGBMovie(Movie):
         threshold: float = 0.01,
         n_colors: int = 3,
         blue_led_frames: Optional[np.ndarray] = None,
+        blue_level: float = 0.5,
         pixel_size: Optional[float] = None,
         dtype: np.dtype = np.float32,
         crop: str = "footprint",
@@ -240,6 +241,10 @@ class RGBMovie(Movie):
         field keeps its empty margins. "signal" is the original rule: where every
         channel's background-subtracted time-mean exceeds ``threshold``, which
         shrinks sparse movies to the region their objects happen to visit.
+
+        ``blue_led_frames`` (one bool per frame) fills the blue plane of the
+        flagged frames with ``blue_level`` (0.5: half scale, as the MATLAB
+        pipeline did), marking when an external perturbation was on.
         """
         if crop not in ("footprint", "signal"):
             raise ValueError(f"crop must be 'footprint' or 'signal', got {crop!r}.")
@@ -293,12 +298,10 @@ class RGBMovie(Movie):
         for color, arr in prepared:
             rgb[:, :, _COLOR_INDEX[color], :] = arr[rb:re + 1, cb:ce + 1, :]
 
-        # Blue LED plane.
-        if blue_led_frames is not None and "blue" in _COLOR_INDEX and n_colors > _COLOR_INDEX["blue"]:
-            flags = np.asarray(blue_led_frames, dtype=bool)
-            for i in range(num_frames):
-                if i < len(flags) and flags[i]:
-                    rgb[:, :, _COLOR_INDEX["blue"], i] = 0.5
+        # Blue plane: uniform ``blue_level`` on frames flagged as perturbed.
+        if blue_led_frames is not None and n_colors > _COLOR_INDEX["blue"]:
+            flags = np.asarray(blue_led_frames, dtype=bool)[:num_frames]
+            rgb[:, :, _COLOR_INDEX["blue"], :len(flags)][..., flags] = blue_level
 
         return cls(rgb, crop_range=crop_range, pixel_size=pixel_size)
 
