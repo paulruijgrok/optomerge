@@ -88,3 +88,6 @@ run_log.txt
 .env
 *.pem
 *.key
+
+# Legacy MATLAB reference code, kept locally only (not part of the repo)
+old_code/
